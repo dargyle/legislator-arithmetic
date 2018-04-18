@@ -13,10 +13,34 @@ from keras.models import load_model
 from IPython.display import SVG
 from keras.utils.vis_utils import model_to_dot
 
-DATA_PATH = os.path.expanduser("~/temp/")
+DATA_PATH = os.path.expanduser("~/data/leg_math/")
 
-with open(DATA_PATH + 'data_bundle.pkl', 'rb') as f:
-    vote_data = pickle.load(f)
+vote_df_temp = pd.read_feather(DATA_PATH + "vote_df_cleaned.feather")
+
+leg_ids = vote_df_temp["leg_id"].unique()
+vote_ids = vote_df_temp["vote_id"].unique()
+
+leg_crosswalk = pd.Series(leg_ids).to_dict()
+leg_crosswalk_rev = dict((v, k) for k, v in leg_crosswalk.items())
+vote_crosswalk = pd.Series(vote_ids).to_dict()
+vote_crosswalk_rev = dict((v, k) for k, v in vote_crosswalk.items())
+
+vote_df_temp["leg_id"] = vote_df_temp["leg_id"].map(leg_crosswalk_rev)
+vote_df_temp["vote_id"] = vote_df_temp["vote_id"].map(vote_crosswalk_rev)
+# Shuffle the order of the vote data
+vote_df_temp = vote_df_temp.sample(frac=1, replace=False)
+
+init_embedding = vote_df_temp[["leg_id", "init_value"]].drop_duplicates().set_index("leg_id").sort_index()
+
+vote_data = {'J': len(leg_ids),
+             'M': len(vote_ids),
+             'N': len(vote_df_temp),
+             'j': vote_df_temp["leg_id"].values,
+             'm': vote_df_temp["vote_id"].values,
+             'y': vote_df_temp["vote"].astype(int).values,
+             'init_embedding': init_embedding,
+             'vote_crosswalk': vote_crosswalk,
+             'leg_crosswalk': leg_crosswalk}
 
 print("N Legislators: {}".format(vote_data["J"]))
 print("N Votes: {}".format(vote_data["M"]))
@@ -94,7 +118,7 @@ ax = losses.plot(x='epoch', figsize={7, 10}, grid=True)
 ax.set_ylabel("accuracy")
 ax.set_ylim([0.0, 3.0])
 
-leg_data = pd.read_pickle(DATA_PATH + "leg_data.pkl")
+leg_data = pd.read_feather(DATA_PATH + "leg_data.feather")
 
 pd.DataFrame(fitted_model.layers[2].get_weights()[0])
 cf_ideal_points = pd.DataFrame(fitted_model.layers[2].get_weights()[0])
