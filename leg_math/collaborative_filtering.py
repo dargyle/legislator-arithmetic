@@ -17,6 +17,10 @@ DATA_PATH = os.path.expanduser("~/data/leg_math/")
 
 vote_df_temp = pd.read_feather(DATA_PATH + "vote_df_cleaned.feather")
 
+congress_cutoff = 110
+if congress_cutoff:
+    vote_df_temp = vote_df_temp[vote_df_temp["congress"] >= congress_cutoff]
+
 leg_ids = vote_df_temp["leg_id"].unique()
 vote_ids = vote_df_temp["vote_id"].unique()
 
@@ -30,7 +34,7 @@ vote_df_temp["vote_id"] = vote_df_temp["vote_id"].map(vote_crosswalk_rev)
 # Shuffle the order of the vote data
 vote_df_temp = vote_df_temp.sample(frac=1, replace=False)
 
-init_embedding = vote_df_temp[["leg_id", "init_value"]].drop_duplicates().set_index("leg_id").sort_index()
+init_embedding = vote_df_temp[["leg_id", "init_value"]].drop_duplicates("leg_id").set_index("leg_id").sort_index()
 
 vote_data = {'J': len(leg_ids),
              'M': len(vote_ids),
@@ -51,21 +55,30 @@ print(vote_data["y"].mean())
 
 n_users = vote_data["J"]
 m_items = vote_data["M"]
-k_dim = 5
+k_dim = 2
+
+use_popularity = True
 
 init_embedding_final = pd.concat([vote_data["init_embedding"]["init_value"] * np.random.rand(vote_data["J"]) for j in range(k_dim)], axis=1)
 
 # Switch to the functional api (current version)
 leg_input = Input(shape=(1, ), dtype="int32", name="leg_input")
-P = Embedding(input_dim=n_users, output_dim=k_dim, input_length=1, weights=[init_embedding_final.values])(leg_input)
-flat_P = Reshape((k_dim,))(P)
+ideal_points = Embedding(input_dim=n_users, output_dim=k_dim, input_length=1, weights=[init_embedding_final.values], name="ideal_points")(leg_input)
+flat_ideal_points = Reshape((k_dim,))(ideal_points)
 bill_input = Input(shape=(1, ), dtype="int32", name="bill_input")
-Q = Embedding(input_dim=m_items, output_dim=k_dim, input_length=1)(bill_input)
-flat_Q = Reshape((k_dim,))(Q)
-combined = Dot(axes=1)([flat_P, flat_Q])
-main_output = Dense(1, activation="sigmoid", name="main_output")(combined)
+polarity = Embedding(input_dim=m_items, output_dim=k_dim, input_length=1, name="polarity")(bill_input)
+flat_polarity = Reshape((k_dim,))(polarity)
+if use_popularity:
+    popularity = Embedding(input_dim=m_items, output_dim=1, input_length=1, name="popularity")(bill_input)
+    flat_popularity = Flatten()(popularity)
+    combined_temp = Dot(axes=1)([flat_ideal_points, flat_polarity])
+    combined = Add()([combined_temp, flat_popularity])
+else:
+    combined = Dot(axes=1)([flat_ideal_points, flat_polarity])
+main_output = Dense(1, activation="sigmoid", name="main_output", use_bias=False)(combined)
 
 model = Model(inputs=[leg_input, bill_input], outputs=[main_output])
+model.summary()
 
 SVG(model_to_dot(model).create(prog='dot', format='svg'))
 
@@ -83,7 +96,7 @@ from keras.callbacks import Callback, EarlyStopping, ModelCheckpoint
 #                     class_weight={0: sample_weights[0],
 #                                   1: sample_weights[1]})
 
-callbacks = [EarlyStopping('val_loss', patience=25)]
+callbacks = [EarlyStopping('val_loss', patience=5)]
 history = model.fit([vote_data["j"], vote_data["m"]], vote_data["y"], epochs=200, batch_size=8192,
                     validation_split=.2, verbose=2, callbacks=callbacks,
                     class_weight={0: sample_weights[0],
