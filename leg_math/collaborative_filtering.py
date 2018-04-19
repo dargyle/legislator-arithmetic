@@ -4,20 +4,139 @@ import pandas as pd
 
 import pickle
 
+import warnings
+
 from keras.layers import Embedding, Reshape, Merge, Dropout, SpatialDropout1D, Dense, Flatten, Input, Dot, LSTM, Add, Conv1D, MaxPooling1D, Concatenate,  Multiply
 from keras.models import Sequential, Model
-from keras import regularizers
+from keras.initializers import TruncatedNormal
+from keras.regularizers import Regularizer
+from keras.callbacks import Callback
+from keras.constraints import unit_norm
 
 from keras.models import load_model
 
 from IPython.display import SVG
 from keras.utils.vis_utils import model_to_dot
 
+from keras import backend as K
+
+
+class GetBest(Callback):
+    """Get the best model at the end of training.
+    https://github.com/keras-team/keras/issues/2768
+
+    # Arguments
+        monitor: quantity to monitor.
+        verbose: verbosity mode, 0 or 1.
+        mode: one of {auto, min, max}.
+            The decision
+            to overwrite the current stored weights is made
+            based on either the maximization or the
+            minimization of the monitored quantity. For `val_acc`,
+            this should be `max`, for `val_loss` this should
+            be `min`, etc. In `auto` mode, the direction is
+            automatically inferred from the name of the monitored quantity.
+        period: Interval (number of epochs) between checkpoints.
+    # Example
+        callbacks = [GetBest(monitor='val_acc', verbose=1, mode='max')]
+        mode.fit(X, y, validation_data=(X_eval, Y_eval),
+                 callbacks=callbacks)
+    """
+
+    def __init__(self, monitor='val_loss', verbose=0,
+                 mode='auto', period=1):
+        super(GetBest, self).__init__()
+        self.monitor = monitor
+        self.verbose = verbose
+        self.period = period
+        self.best_epochs = 0
+        self.epochs_since_last_save = 0
+
+        if mode not in ['auto', 'min', 'max']:
+            warnings.warn('GetBest mode %s is unknown, '
+                          'fallback to auto mode.' % (mode),
+                          RuntimeWarning)
+            mode = 'auto'
+
+        if mode == 'min':
+            self.monitor_op = np.less
+            self.best = np.Inf
+        elif mode == 'max':
+            self.monitor_op = np.greater
+            self.best = -np.Inf
+        else:
+            if 'acc' in self.monitor or self.monitor.startswith('fmeasure'):
+                self.monitor_op = np.greater
+                self.best = -np.Inf
+            else:
+                self.monitor_op = np.less
+                self.best = np.Inf
+
+    def on_train_begin(self, logs=None):
+        self.best_weights = self.model.get_weights()
+
+    def on_epoch_end(self, epoch, logs=None):
+        logs = logs or {}
+        self.epochs_since_last_save += 1
+        if self.epochs_since_last_save >= self.period:
+            self.epochs_since_last_save = 0
+            #filepath = self.filepath.format(epoch=epoch + 1, **logs)
+            current = logs.get(self.monitor)
+            if current is None:
+                warnings.warn('Can pick best model only with %s available, '
+                              'skipping.' % (self.monitor), RuntimeWarning)
+            else:
+                if self.monitor_op(current, self.best):
+                    if self.verbose > 0:
+                        print('\nEpoch %05d: %s improved from %0.5f to %0.5f,'
+                              ' storing weights.'
+                              % (epoch + 1, self.monitor, self.best,
+                                 current))
+                    self.best = current
+                    self.best_epochs = epoch + 1
+                    self.best_weights = self.model.get_weights()
+                else:
+                    if self.verbose > 0:
+                        print('\nEpoch %05d: %s did not improve' %
+                              (epoch + 1, self.monitor))
+
+    def on_train_end(self, logs=None):
+        if self.verbose > 0:
+            print('Using epoch %05d with %s: %0.5f' % (self.best_epochs, self.monitor,
+                                                       self.best))
+        self.model.set_weights(self.best_weights)
+
+
+class OrthReg(Regularizer):
+    """Orthogonoality regularizers
+
+    # Arguments
+        rf: Float; rf regularization factor.
+    """
+    # https://stackoverflow.com/questions/42911671/how-can-i-add-orthogonality-regularization-in-keras
+    # m = K.dot(K.transpose(w), w) - K.eye(w[1].shape[0])
+
+    def __init__(self, rf=1.0):
+        self.rf = K.cast_to_floatx(rf)
+
+    def __call__(self, x):
+            regularization = 0.0
+            m = K.dot(K.transpose(x), x)
+            n = m - K.eye(K.int_shape(m)[0])
+            norm = K.sqrt(self.rf * K.sum(K.square(K.abs(n))))
+            regularization += norm
+            print(regularization)
+            return regularization
+
+    def get_config(self):
+        return {'rf': float(self.rf)}
+
+
 DATA_PATH = os.path.expanduser("~/data/leg_math/")
 
 vote_df_temp = pd.read_feather(DATA_PATH + "vote_df_cleaned.feather")
 
-congress_cutoff = 110
+congress_cutoff = 0
 if congress_cutoff:
     vote_df_temp = vote_df_temp[vote_df_temp["congress"] >= congress_cutoff]
 
@@ -59,11 +178,40 @@ k_dim = 2
 
 use_popularity = True
 
-init_embedding_final = pd.concat([vote_data["init_embedding"]["init_value"] * np.random.rand(vote_data["J"]) for j in range(k_dim)], axis=1)
+init_leg_embedding_final = pd.concat([vote_data["init_embedding"]["init_value"] * np.random.rand(vote_data["J"]) for j in range(k_dim)], axis=1)
+# Make orthogonal
+# init_leg_embedding_final.columns = range(k_dim)
+# x -= x.dot(k) * k / np.linalg.norm(k)**2
+# init_leg_embedding_final.corr()
+# init_leg_embedding_final[1] -= (init_leg_embedding_final[1].dot(init_leg_embedding_final[0]) * init_leg_embedding_final[0] /
+#                                 np.linalg.norm(init_leg_embedding_final[0])**2)
+# init_leg_embedding_final.corr()
+#
+# init_pol_embedding_final = pd.concat([pd.DataFrame(np.random.randn(vote_data["M"]))for j in range(k_dim)], axis=1)
+# # Make orthogonal
+# init_pol_embedding_final.columns = range(k_dim)
+# # x -= x.dot(k) * k / np.linalg.norm(k)**2
+# init_pol_embedding_final.corr()
+# init_pol_embedding_final[1] -= init_pol_embedding_final[1].dot(init_pol_embedding_final[0]) * init_pol_embedding_final[0] / np.linalg.norm(init_pol_embedding_final[0])**2
+# init_pol_embedding_final.corr()
+
+# vr = random_vector()
+# vo = vr
+# for v in (v1, v2, ... vn):
+#     vo = vo - dot( vr, v ) / norm( v )
+# if norm(vo) < k1 * norm(vr):
+#     # this vector was mostly contained in the spanned subspace
+# else:
+#     # linearly independent, go ahead and use
+
 
 # Switch to the functional api (current version)
 leg_input = Input(shape=(1, ), dtype="int32", name="leg_input")
-ideal_points = Embedding(input_dim=n_users, output_dim=k_dim, input_length=1, weights=[init_embedding_final.values], name="ideal_points")(leg_input)
+ideal_points = Embedding(input_dim=n_users, output_dim=k_dim, input_length=1, name="ideal_points",
+                         # embeddings_initializer=TruncatedNormal(mean=0.0, stddev=0.05, seed=None),
+                         embeddings_regularizer=OrthReg(0.00001),
+                         weights=[init_leg_embedding_final.values]
+                         )(leg_input)
 flat_ideal_points = Reshape((k_dim,))(ideal_points)
 bill_input = Input(shape=(1, ), dtype="int32", name="bill_input")
 polarity = Embedding(input_dim=m_items, output_dim=k_dim, input_length=1, name="polarity")(bill_input)
@@ -75,7 +223,7 @@ if use_popularity:
     combined = Add()([combined_temp, flat_popularity])
 else:
     combined = Dot(axes=1)([flat_ideal_points, flat_polarity])
-main_output = Dense(1, activation="sigmoid", name="main_output", use_bias=False)(combined)
+main_output = Dense(1, activation="sigmoid", name="main_output", use_bias=False, kernel_constraint=unit_norm())(combined)
 
 model = Model(inputs=[leg_input, bill_input], outputs=[main_output])
 model.summary()
@@ -83,7 +231,7 @@ model.summary()
 SVG(model_to_dot(model).create(prog='dot', format='svg'))
 
 # model.compile(loss='mse', optimizer='adamax')
-model.compile(loss='binary_crossentropy', optimizer='adamax', metrics=['accuracy'])
+model.compile(loss='binary_crossentropy', optimizer='nadam', metrics=['accuracy'])
 
 sample_weights = (1.0 * vote_data["y"].shape[0]) / (len(np.unique(vote_data["y"])) * np.bincount(vote_data["y"]))
 
@@ -96,18 +244,23 @@ from keras.callbacks import Callback, EarlyStopping, ModelCheckpoint
 #                     class_weight={0: sample_weights[0],
 #                                   1: sample_weights[1]})
 
-callbacks = [EarlyStopping('val_loss', patience=5)]
-history = model.fit([vote_data["j"], vote_data["m"]], vote_data["y"], epochs=200, batch_size=8192,
-                    validation_split=.2, verbose=2, callbacks=callbacks,
+callbacks = [EarlyStopping('val_loss', patience=10),
+             GetBest(monitor='val_loss', verbose=1, mode='min')]
+history = model.fit([vote_data["j"], vote_data["m"]], vote_data["y"], epochs=200, batch_size=32768,
+                    validation_split=.2, verbose=1, callbacks=callbacks,
                     class_weight={0: sample_weights[0],
                                   1: sample_weights[1]})
 
-model.save(DATA_PATH + "keras_result.h5")
+# model.save(DATA_PATH + "keras_result.h5")
+model.save_weights(DATA_PATH + 'my_model_weights.h5')
 
 with open(DATA_PATH + "train_history.pkl", 'wb') as file_pi:
         pickle.dump(history.history, file_pi)
+history_dict = history.history
 
-fitted_model = load_model(DATA_PATH + "keras_result.h5")
+# fitted_model = load_model(DATA_PATH + "keras_result.h5", custom_objects={"cust_reg": cust_reg})
+model.load_weights(DATA_PATH + 'my_model_weights.h5')
+fitted_model = model
 
 with open(DATA_PATH + "train_history.pkl", 'rb') as file_pi:
         history_dict = pickle.load(file_pi)
@@ -119,7 +272,7 @@ pd.DataFrame(fitted_model.predict([vote_data["j"], vote_data["m"]]))[0].hist()
 losses = pd.DataFrame({'epoch': [i + 1 for i in range(len(history_dict['loss']))],
                        'training': [loss for loss in history_dict['loss']],
                        'validation': [loss for loss in history_dict['val_loss']]})
-ax = losses.plot(x='epoch', figsize={7, 10}, grid=True)
+ax = losses.iloc[1:, :].plot(x='epoch', figsize={7, 10}, grid=True)
 ax.set_ylabel("log loss")
 ax.set_ylim([0.0, 3.0])
 
@@ -127,21 +280,29 @@ ax.set_ylim([0.0, 3.0])
 losses = pd.DataFrame({'epoch': [i + 1 for i in range(len(history_dict['acc']))],
                        'training': [loss for loss in history_dict['acc']],
                        'validation': [loss for loss in history_dict['val_acc']]})
-ax = losses.plot(x='epoch', figsize={7, 10}, grid=True)
+ax = losses.iloc[1:, :].plot(x='epoch', figsize={7, 10}, grid=True)
 ax.set_ylabel("accuracy")
 ax.set_ylim([0.0, 3.0])
 
 leg_data = pd.read_feather(DATA_PATH + "leg_data.feather")
+leg_bio_data = leg_data[["leg_id", "state_icpsr", "bioname", "party_code", "nominate_dim1", "nominate_dim2"]].drop_duplicates()
+leg_bio_data.columns
+
+pd.DataFrame(fitted_model.get_layer("ideal_points").get_weights()[0]).corr()
+pd.DataFrame(fitted_model.get_layer("polarity").get_weights()[0]).corr()
+pd.DataFrame(fitted_model.get_layer("main_output").get_weights()[0])
 
 pd.DataFrame(fitted_model.layers[2].get_weights()[0])
 cf_ideal_points = pd.DataFrame(fitted_model.layers[2].get_weights()[0])
 cf_ideal_points.index = pd.Series(cf_ideal_points.index).map(vote_data["leg_crosswalk"])
-leg_data_cf = pd.merge(leg_data, cf_ideal_points, left_on="leg_id", right_index=True)
+leg_data_cf = pd.merge(leg_bio_data, cf_ideal_points, left_on="leg_id", right_index=True, how="inner")
+leg_data_cf[["nominate_dim1", "nominate_dim2", 0 , 1]].corr()
+leg_data_cf.plot(kind="scatter", x=0, y=1)
 leg_data_cf.plot(kind="scatter", x="nominate_dim1", y=0)
 
 from pandas.plotting import scatter_matrix
-scatter_matrix(leg_data_cf[["nominate_dim1", "nominate_dim2", 0 , 1]],
-               alpha=0.2, figsize=(8, 8), diagonal='kde')
+# scatter_matrix(leg_data_cf[["nominate_dim1", "nominate_dim2", 0 , 1]],
+#                alpha=0.2, figsize=(8, 8), diagonal='kde')
 
 # leg_data_cf["color_list"] = "g"
 # leg_data_cf.loc[leg_data_cf["party_code"] == 100, "color_list"] = "b"
@@ -150,13 +311,18 @@ scatter_matrix(leg_data_cf[["nominate_dim1", "nominate_dim2", 0 , 1]],
 
 leg_data_cf.loc[leg_data_cf["party_code"] == 200, 0].hist()
 leg_data_cf.loc[leg_data_cf["party_code"] == 200, 1].hist()
-ax = leg_data_cf[leg_data_cf["party_code"] == 100].plot.scatter(x=0, y=1, color='DarkBlue', label='Dem', xlim=(-4,4), ylim=(-4,4))
+ax = leg_data_cf[leg_data_cf["party_code"] == 100].plot.scatter(x=0, y=1, color='DarkBlue', label='Dem')
 leg_data_cf[leg_data_cf["party_code"] == 200].plot.scatter(x="nominate_dim1", y=1, color='Red', label='Rep')
 
 import seaborn as sns
 sns.set(style="ticks")
 
-sns.pairplot(leg_data_cf[leg_data_cf["party_code"].isin([100, 200])], hue="party_code", vars=["nominate_dim1", "nominate_dim2", 0 , 1], diag_kind="kde", plot_kws=dict(alpha=0.25), markers=".")
+sns.pairplot(leg_data_cf[leg_data_cf["party_code"].isin([100, 200])],
+             hue="party_code", palette={100: "blue", 200: "red"},
+             vars=["nominate_dim1", "nominate_dim2", 0 , 1],
+             diag_kind="kde", plot_kws=dict(alpha=0.25), markers=".")
+
+leg_data_cf[["nominate_dim1", "nominate_dim2", 0 , 1]].corr()
 
 leg_data_cf.groupby("party_code").mean()
 
