@@ -6,11 +6,12 @@ import pickle
 
 import warnings
 
-from keras.layers import Embedding, Reshape, Merge, Dropout, SpatialDropout1D, Dense, Flatten, Input, Dot, LSTM, Add, Conv1D, MaxPooling1D, Concatenate,  Multiply
+from keras.layers import Embedding, Reshape, Merge, Dropout, SpatialDropout1D, Dense, Flatten, Input, Dot, LSTM, Add, Conv1D, MaxPooling1D, Concatenate, Multiply, BatchNormalization, Lambda
 from keras.models import Sequential, Model
 from keras.initializers import TruncatedNormal
+from keras import regularizers
 from keras.regularizers import Regularizer
-from keras.callbacks import Callback
+from keras.callbacks import Callback, EarlyStopping, ModelCheckpoint
 from keras.constraints import unit_norm
 
 from keras.models import load_model
@@ -131,18 +132,33 @@ class OrthReg(Regularizer):
     def get_config(self):
         return {'rf': float(self.rf)}
 
+# asdf = fitted_model.get_layer("ideal_points").get_weights()[0]
+# m = asdf.transpose().dot(asdf)
+# n = m - np.eye(2)
+# rf = 0.1
+# np.sqrt(rf * np.sum(np.square(np.abs(n))))
+# np.sqrt(1e-8 * np.sum(np.square(np.abs(n))))
+# np.sqrt(1.0 * np.sum(np.square(np.abs(n))))
+
 
 DATA_PATH = os.path.expanduser("~/data/leg_math/")
 
-vote_df_temp = pd.read_feather(DATA_PATH + "vote_df_cleaned.feather")
+vote_df = pd.read_feather(DATA_PATH + "vote_df_cleaned.feather")
 
-congress_cutoff = 0
+congress_cutoff = 110
 if congress_cutoff:
-    vote_df_temp = vote_df_temp[vote_df_temp["congress"] >= congress_cutoff]
+    vote_df = vote_df[vote_df["congress"] >= congress_cutoff]
 
-leg_ids = vote_df_temp["leg_id"].unique()
-vote_ids = vote_df_temp["vote_id"].unique()
+first_session = vote_df.groupby("leg_id")[["congress"]].agg(["min", "max"])
+first_session.columns = ["first_session", "last_session"]
+# first_session["first_session"].value_counts()
+vote_df = pd.merge(vote_df, first_session, left_on="leg_id", right_index=True)
+vote_df["time_passed"] = vote_df["congress"] - vote_df["first_session"]
 
+leg_ids = vote_df["leg_id"].unique()
+vote_ids = vote_df["vote_id"].unique()
+
+vote_df_temp = vote_df.copy()
 leg_crosswalk = pd.Series(leg_ids).to_dict()
 leg_crosswalk_rev = dict((v, k) for k, v in leg_crosswalk.items())
 vote_crosswalk = pd.Series(vote_ids).to_dict()
@@ -161,6 +177,7 @@ vote_data = {'J': len(leg_ids),
              'j': vote_df_temp["leg_id"].values,
              'm': vote_df_temp["vote_id"].values,
              'y': vote_df_temp["vote"].astype(int).values,
+             'time_passed': vote_df_temp["time_passed"].values,
              'init_embedding': init_embedding,
              'vote_crosswalk': vote_crosswalk,
              'leg_crosswalk': leg_crosswalk}
@@ -174,9 +191,11 @@ print(vote_data["y"].mean())
 
 n_users = vote_data["J"]
 m_items = vote_data["M"]
-k_dim = 2
+k_dim = 1
+k_time = 1
 
 use_popularity = True
+polarity_dropout = 0.0
 
 init_leg_embedding_final = pd.concat([vote_data["init_embedding"]["init_value"] * np.random.rand(vote_data["J"]) for j in range(k_dim)], axis=1)
 # Make orthogonal
@@ -205,27 +224,58 @@ init_leg_embedding_final = pd.concat([vote_data["init_embedding"]["init_value"] 
 #     # linearly independent, go ahead and use
 
 
+def standardize(x):
+    x -= K.mean(x, axis=1, keepdims=True)
+    x /= K.std(x, axis=1)
+    return x
+
+def f(input_shape):
+    return input_shape
+
 # Switch to the functional api (current version)
 leg_input = Input(shape=(1, ), dtype="int32", name="leg_input")
+time_input = Input(shape=(k_time, ), name="time_input")
 ideal_points = Embedding(input_dim=n_users, output_dim=k_dim, input_length=1, name="ideal_points",
                          # embeddings_initializer=TruncatedNormal(mean=0.0, stddev=0.05, seed=None),
-                         embeddings_regularizer=OrthReg(0.00001),
+                         # embeddings_regularizer=OrthReg(1e-2),
+                         # embeddings_regularizer=regularizers.l2(1e-2),
                          weights=[init_leg_embedding_final.values]
                          )(leg_input)
-flat_ideal_points = Reshape((k_dim,))(ideal_points)
+# ideal_points = BatchNormalization()(ideal_points)
+# ideal_points = Lambda(standardize, name="norm_ideal_points")(ideal_points)
+# for i in range(1, k_time + 1):
+ideal_points_time = Embedding(input_dim=n_users, output_dim=k_dim, input_length=1, name="ideal_points_time",
+                              embeddings_initializer=TruncatedNormal(mean=0.0, stddev=0.05, seed=None),
+                              # weights=[init_leg_embedding_final.values]
+                              )(leg_input)
+ideal_points_time = Dot(axes=1)([time_input, ideal_points_time])
+
+# flat_ideal_points = Reshape((k_dim,))(ideal_points)
+# flat_ideal_points_time = Reshape((k_dim,))(ideal_points_time)
+
+main_ideal_points = Add()([ideal_points, ideal_points_time])
+# main_ideal_points = Lambda(standardize, name="norm_ideal_points")(main_ideal_points)
+main_ideal_points = BatchNormalization()(main_ideal_points)
+
+flat_ideal_points = Reshape((k_dim,))(main_ideal_points)
+
 bill_input = Input(shape=(1, ), dtype="int32", name="bill_input")
-polarity = Embedding(input_dim=m_items, output_dim=k_dim, input_length=1, name="polarity")(bill_input)
+polarity = Embedding(input_dim=m_items, output_dim=k_dim, input_length=1, name="polarity",
+                     embeddings_initializer=TruncatedNormal(mean=0.0, stddev=0.05, seed=None))(bill_input)
+if polarity_dropout > 0.0:
+    polarity = Dropout(polarity_dropout)(polarity)
 flat_polarity = Reshape((k_dim,))(polarity)
 if use_popularity:
-    popularity = Embedding(input_dim=m_items, output_dim=1, input_length=1, name="popularity")(bill_input)
+    popularity = Embedding(input_dim=m_items, output_dim=1, input_length=1, name="popularity",
+                           embeddings_initializer=TruncatedNormal(mean=0.0, stddev=0.05, seed=None))(bill_input)
     flat_popularity = Flatten()(popularity)
-    combined_temp = Dot(axes=1)([flat_ideal_points, flat_polarity])
+    combined_temp = Dot(axes=1)([main_ideal_points, flat_polarity])
     combined = Add()([combined_temp, flat_popularity])
 else:
     combined = Dot(axes=1)([flat_ideal_points, flat_polarity])
 main_output = Dense(1, activation="sigmoid", name="main_output", use_bias=False, kernel_constraint=unit_norm())(combined)
 
-model = Model(inputs=[leg_input, bill_input], outputs=[main_output])
+model = Model(inputs=[leg_input, bill_input, time_input], outputs=[main_output])
 model.summary()
 
 SVG(model_to_dot(model).create(prog='dot', format='svg'))
@@ -235,7 +285,6 @@ model.compile(loss='binary_crossentropy', optimizer='nadam', metrics=['accuracy'
 
 sample_weights = (1.0 * vote_data["y"].shape[0]) / (len(np.unique(vote_data["y"])) * np.bincount(vote_data["y"]))
 
-from keras.callbacks import Callback, EarlyStopping, ModelCheckpoint
 # MODEL_WEIGHTS_FILE = ("~/temp/" + "collab_filter_example.h5")
 # callbacks = [EarlyStopping('val_loss', patience=5),
 #              ModelCheckpoint(MODEL_WEIGHTS_FILE, save_best_only=True)]
@@ -246,8 +295,8 @@ from keras.callbacks import Callback, EarlyStopping, ModelCheckpoint
 
 callbacks = [EarlyStopping('val_loss', patience=10),
              GetBest(monitor='val_loss', verbose=1, mode='min')]
-history = model.fit([vote_data["j"], vote_data["m"]], vote_data["y"], epochs=200, batch_size=32768,
-                    validation_split=.2, verbose=1, callbacks=callbacks,
+history = model.fit([vote_data["j"], vote_data["m"], vote_data["time_passed"]], vote_data["y"], epochs=500, batch_size=32768,
+                    validation_split=.2, verbose=2, callbacks=callbacks,
                     class_weight={0: sample_weights[0],
                                   1: sample_weights[1]})
 
@@ -267,7 +316,7 @@ with open(DATA_PATH + "train_history.pkl", 'rb') as file_pi:
 
 # %matplotlib inline
 # pd.DataFrame(fitted_model.layers[0].layers[0].get_weights()[0]).hist()
-pd.DataFrame(fitted_model.predict([vote_data["j"], vote_data["m"]]))[0].hist()
+pd.DataFrame(fitted_model.predict([vote_data["j"], vote_data["m"], vote_data["time_passed"]]))[0].hist()
 
 losses = pd.DataFrame({'epoch': [i + 1 for i in range(len(history_dict['loss']))],
                        'training': [loss for loss in history_dict['loss']],
@@ -288,15 +337,49 @@ leg_data = pd.read_feather(DATA_PATH + "leg_data.feather")
 leg_bio_data = leg_data[["leg_id", "state_icpsr", "bioname", "party_code", "nominate_dim1", "nominate_dim2"]].drop_duplicates()
 leg_bio_data.columns
 
-pd.DataFrame(fitted_model.get_layer("ideal_points").get_weights()[0]).corr()
-pd.DataFrame(fitted_model.get_layer("polarity").get_weights()[0]).corr()
-pd.DataFrame(fitted_model.get_layer("main_output").get_weights()[0])
+var_list = ["nominate_dim1", "nominate_dim2", "ideal_point", "drift"]
 
-pd.DataFrame(fitted_model.layers[2].get_weights()[0])
-cf_ideal_points = pd.DataFrame(fitted_model.layers[2].get_weights()[0])
+cf_ideal_points = pd.DataFrame(fitted_model.get_layer("ideal_points").get_weights()[0], columns=["ideal_point"])
 cf_ideal_points.index = pd.Series(cf_ideal_points.index).map(vote_data["leg_crosswalk"])
+cf_time_drift = pd.DataFrame(fitted_model.get_layer("ideal_points_time").get_weights()[0], columns=["drift"])
+cf_time_drift.index = pd.Series(cf_time_drift.index).map(vote_data["leg_crosswalk"])
+
 leg_data_cf = pd.merge(leg_bio_data, cf_ideal_points, left_on="leg_id", right_index=True, how="inner")
-leg_data_cf[["nominate_dim1", "nominate_dim2", 0 , 1]].corr()
+leg_data_cf = pd.merge(leg_data_cf, cf_time_drift, left_on="leg_id", right_index=True, how="inner")
+leg_data_cf = pd.merge(leg_data_cf, first_session, left_on="leg_id", right_index=True, how="inner")
+
+leg_data_cf.describe()
+
+full_sample = leg_data_cf[(leg_data_cf["first_session"] == 110) & (leg_data_cf["last_session"] == 115)]
+full_sample.groupby("party_code").mean()
+full_sample[full_sample["party_code"] == 100].sort_values("drift")
+
+leg_data_cf[leg_data_cf["party_code"] == 200].sort_values("drift")
+
+leg_data_cf[var_list].corr()
+
+polarity = pd.DataFrame(fitted_model.get_layer("polarity").get_weights()[0], columns=["polarity"])
+polarity.index = pd.Series(polarity.index).map(vote_data["vote_crosswalk"])
+popularity = pd.DataFrame(fitted_model.get_layer("popularity").get_weights()[0], columns=["popularity"])
+popularity.index = pd.Series(popularity.index).map(vote_data["vote_crosswalk"])
+
+pol_pop = pd.merge(polarity, popularity, left_index=True, right_index=True)
+pol_pop.describe()
+pol_pop["temp_sess"] = pol_pop.index.str.slice(0, 3)
+pol_pop.groupby(["temp_sess"]).mean()
+
+fitted_model.layers
+
+vote_df_eval = vote_df.copy()
+vote_df_eval = pd.merge(vote_df_eval, cf_ideal_points, left_on="leg_id", right_index=True)
+vote_df_eval = pd.merge(vote_df_eval, cf_time_drift, left_on="leg_id", right_index=True)
+
+vote_df_eval["time_specific_idea"] = vote_df_eval["ideal_point"] + (vote_df_eval["drift"] * vote_df_eval["time_passed"])
+asdf = vote_df_eval[["congress", "chamber", "leg_id", "first_session", "last_session", "time_passed", "ideal_point", "drift", "time_specific_idea"]].drop_duplicates()
+asdf.describe()
+pd.merge(leg_bio_data, asdf, on="leg_id").sort_values("time_specific_idea")
+
+
 leg_data_cf.plot(kind="scatter", x=0, y=1)
 leg_data_cf.plot(kind="scatter", x="nominate_dim1", y=0)
 
@@ -316,13 +399,12 @@ leg_data_cf[leg_data_cf["party_code"] == 200].plot.scatter(x="nominate_dim1", y=
 
 import seaborn as sns
 sns.set(style="ticks")
-
 sns.pairplot(leg_data_cf[leg_data_cf["party_code"].isin([100, 200])],
              hue="party_code", palette={100: "blue", 200: "red"},
-             vars=["nominate_dim1", "nominate_dim2", 0 , 1],
+             vars=var_list,
              diag_kind="kde", plot_kws=dict(alpha=0.25), markers=".")
 
-leg_data_cf[["nominate_dim1", "nominate_dim2", 0 , 1]].corr()
+leg_data_cf[var_list].corr()
 
 leg_data_cf.groupby("party_code").mean()
 
