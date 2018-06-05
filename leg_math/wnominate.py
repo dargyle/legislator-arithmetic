@@ -6,13 +6,14 @@ import pickle
 
 import warnings
 
-from keras.layers import Embedding, Reshape, Merge, Dropout, SpatialDropout1D, Dense, Flatten, Input, Dot, LSTM, Add, Conv1D, MaxPooling1D, Concatenate, Multiply, BatchNormalization, Lambda
+from keras.layers import Embedding, Reshape, Merge, Dropout, SpatialDropout1D, Dense, Flatten, Input, Dot, LSTM, Add, Subtract, Conv1D, MaxPooling1D, Concatenate, Multiply, BatchNormalization, Lambda
 from keras.models import Sequential, Model
 from keras.initializers import TruncatedNormal
 from keras import regularizers
 from keras.regularizers import Regularizer
 from keras.callbacks import Callback, EarlyStopping, ModelCheckpoint
-from keras.constraints import unit_norm
+from keras.constraints import Constraint, unit_norm, MinMaxNorm
+from keras.engine.topology import Layer
 
 from keras.models import load_model
 
@@ -109,7 +110,7 @@ class GetBest(Callback):
 
 
 class OrthReg(Regularizer):
-    """Orthogonoality regularizers
+    """Orthogonality regularizers
 
     # Arguments
         rf: Float; rf regularization factor.
@@ -121,16 +122,58 @@ class OrthReg(Regularizer):
         self.rf = K.cast_to_floatx(rf)
 
     def __call__(self, x):
-            regularization = 0.0
-            m = K.dot(K.transpose(x), x)
-            n = m - K.eye(K.int_shape(m)[0])
-            norm = K.sqrt(self.rf * K.sum(K.square(K.abs(n))))
-            regularization += norm
-            print(regularization)
-            return regularization
+        regularization = 0.0
+        m = K.dot(K.transpose(x), x)
+        n = m - K.eye(K.int_shape(m)[0])
+        norm = K.sqrt(self.rf * K.sum(K.square(K.abs(n))))
+        regularization += norm
+        print(regularization)
+        return regularization
 
     def get_config(self):
         return {'rf': float(self.rf)}
+
+
+# class UnitSphere(Regularizer):
+#     """Orthogonality regularizers
+#
+#     # Arguments
+#         rf: Float; rf regularization factor.
+#     """
+#     # https://stackoverflow.com/questions/42911671/how-can-i-add-orthogonality-regularization-in-keras
+#     # m = K.dot(K.transpose(w), w) - K.eye(w[1].shape[0])
+#
+#     def __init__(self, rf=1.0):
+#         self.rf = K.cast_to_floatx(rf)
+#
+#     def __call__(self, x):
+#         regularization = 0.0
+#         # Sum the square of the individual's ideal points, then subtract 1
+#         temp_sum = K.sum(K.square(x), axis=0)
+#         # relu sets negative to zero
+#         # https://stackoverflow.com/questions/41043894/setting-all-negative-values-of-a-tensor-to-zero-in-tensorflow
+#         # reg_term = K.sqrt(self.rf * K.sum(K.relu(temp_sum)))
+#         reg_term = K.cast(temp_sum > 0.0, temp_sum.dtype) * temp_sum
+#         reg_term_sum = K.sqrt(self.rf * K.sum(reg_term))
+#         # if np.isfinite(reg_term):
+#         regularization += reg_term_sum
+#         print(regularization)
+#         return regularization
+#
+#     def get_config(self):
+#         return {'rf': float(self.rf)}
+
+
+class UnitSphere(Constraint):
+    """Orthogonality constraint
+
+    # Arguments
+        rf: Float; rf regularization factor.
+    """
+    def __call__(self, w):
+        temp_sum = K.sum(K.square(w), axis=0)
+        w *= K.cast(K.less_equal(temp_sum, 1.0), K.floatx())
+        return w
 
 # asdf = fitted_model.get_layer("ideal_points").get_weights()[0]
 # m = asdf.transpose().dot(asdf)
@@ -155,7 +198,7 @@ if data_type == "cosponsor":
     multi_sponsored_bills.name = "sponsor_counts"
     vote_df = pd.merge(vote_df, multi_sponsored_bills.to_frame(), left_on="vote_id", right_index=True)
 
-congress_cutoff = 110
+congress_cutoff = 0
 if congress_cutoff:
     vote_df = vote_df[vote_df["congress"] >= congress_cutoff]
 
@@ -203,11 +246,12 @@ print(vote_data["y"].mean())
 
 n_users = vote_data["J"]
 m_items = vote_data["M"]
-k_dim = 5
+k_dim = 2
 
-use_popularity = True
+# use_popularity = True
 ideal_dropout = 0.0
-polarity_dropout = 0.0
+yes_point_dropout = 0.0
+no_point_dropout = 0.0
 leg_input_dropout = 0.0
 bill_input_dropout = 0.0
 
@@ -236,6 +280,45 @@ init_leg_embedding_final = pd.concat([vote_data["init_embedding"]["init_value"] 
 #     # this vector was mostly contained in the spanned subspace
 # else:
 #     # linearly independent, go ahead and use
+
+
+def euc_dist_keras(x, y):
+    return K.sqrt(K.sum(K.square(x - y), axis=-1, keepdims=True))
+
+
+def wnom_term(tlist):
+    w = tlist[0]
+    x = tlist[1]
+    z = tlist[2]
+    temp_sum = K.dot(K.square(w), K.square(x - z))
+    distances = K.sqrt(K.sum(temp_sum, axis=1, keepdims=True))
+    return -0.5 * K.exp(distances)
+
+
+class WnomTerm(Layer):
+
+    def __init__(self, output_dim, **kwargs):
+        self.output_dim = output_dim
+        super(WnomTerm, self).__init__(**kwargs)
+
+    def build(self, input_shape):
+        # Create a trainable weight variable for this layer.
+        self.kernel = self.add_weight(name='kernel',
+                                      shape=(1, input_shape[0][1]),
+                                      initializer='uniform',
+                                      trainable=True)
+        super(WnomTerm, self).build(input_shape)  # Be sure to call this at the end
+
+    def call(self, tlist):
+        x = tlist[0]
+        z = tlist[1]
+        # https://stackoverflow.com/questions/47289116/element-wise-multiplication-with-broadcasting-in-keras-custom-layer
+        temp_sum = K.tf.multiply(K.square(x - z), K.square(self.kernel))
+        distances = K.sqrt(K.sum(temp_sum, axis=1, keepdims=True))
+        return -0.5 * K.exp(distances)
+
+    def compute_output_shape(self, input_shape):
+            return (input_shape[0][0], self.output_dim)
 
 
 def standardize(x):
@@ -281,8 +364,12 @@ else:
 time_input_list = [generate_time_input(i) for i in range(1, k_time + 1)]
 ideal_points = Embedding(input_dim=n_users, output_dim=k_dim, input_length=1, name="ideal_points",
                          # embeddings_initializer=TruncatedNormal(mean=0.0, stddev=0.05, seed=None),
-                         embeddings_regularizer=OrthReg(1e-1),
+                         # embeddings_regularizer=OrthReg(1e-1),
+                         # embeddings_regularizer=UnitSphere(1e-1),
                          # embeddings_regularizer=regularizers.l2(1e-2),
+                         # embeddings_constraint=unit_norm(axis=[0, 1]),
+                         # embeddings_constraint=UnitSphere(),
+                         embeddings_constraint=MinMaxNorm(min_value=0.0, max_value=1.0, axis=1),
                          weights=[init_leg_embedding_final.values]
                          )(leg_input_drop)
 if ideal_dropout > 0.0:
@@ -303,20 +390,27 @@ main_ideal_points = BatchNormalization()(main_ideal_points)
 
 flat_ideal_points = Reshape((k_dim,))(main_ideal_points)
 
-polarity = Embedding(input_dim=m_items, output_dim=k_dim, input_length=1, name="polarity",
+yes_point = Embedding(input_dim=m_items, output_dim=k_dim, input_length=1, name="yes_point",
+                      embeddings_initializer=TruncatedNormal(mean=0.0, stddev=0.05, seed=None))(bill_input_drop)
+
+if yes_point_dropout > 0.0:
+    yes_point = Dropout(yes_point_dropout)(yes_point)
+flat_yes_point = Reshape((k_dim,))(yes_point)
+
+
+no_point = Embedding(input_dim=m_items, output_dim=k_dim, input_length=1, name="no_point",
                      embeddings_initializer=TruncatedNormal(mean=0.0, stddev=0.05, seed=None))(bill_input_drop)
-if polarity_dropout > 0.0:
-    polarity = Dropout(polarity_dropout)(polarity)
-flat_polarity = Reshape((k_dim,))(polarity)
-if use_popularity:
-    popularity = Embedding(input_dim=m_items, output_dim=1, input_length=1, name="popularity",
-                           embeddings_initializer=TruncatedNormal(mean=0.0, stddev=0.05, seed=None))(bill_input_drop)
-    flat_popularity = Flatten()(popularity)
-    combined_temp = Dot(axes=1)([flat_ideal_points, flat_polarity])
-    combined = Add()([combined_temp, flat_popularity])
-else:
-    combined = Dot(axes=1)([flat_ideal_points, flat_polarity])
-main_output = Dense(1, activation="sigmoid", name="main_output", use_bias=False, kernel_constraint=unit_norm())(combined)
+if no_point_dropout > 0.0:
+    no_point = Dropout(no_point_dropout)(no_point)
+flat_no_point = Reshape((k_dim,))(no_point)
+
+
+yes_term = WnomTerm(output_dim=1, trainable=True)([flat_ideal_points, flat_yes_point])
+no_term = WnomTerm(output_dim=1, trainable=True)([flat_ideal_points, flat_no_point])
+
+combined = Subtract()([yes_term, no_term])
+
+main_output = Dense(1, activation="sigmoid", name="main_output", use_bias=False)(combined)
 
 model = Model(inputs=[leg_input, bill_input] + time_input_list, outputs=[main_output])
 model.summary()
@@ -382,7 +476,8 @@ leg_bio_data.columns
 
 ideal_point_names = ["ideal_{}".format(j) for j in range(1, k_dim + 1)]
 drift_names = ["drift_{}".format(j) for j in range(1, k_time + 1)]
-polarity_names = ["polarity_{}".format(j) for j in range(1, k_dim + 1)]
+yes_point_names = ["yes_point_{}".format(j) for j in range(1, k_dim + 1)]
+no_point_names = ["no_point_{}".format(j) for j in range(1, k_dim + 1)]
 var_list = ["nominate_dim1", "nominate_dim2"] + ideal_point_names + drift_names
 
 cf_ideal_points = pd.DataFrame(fitted_model.get_layer("ideal_points").get_weights()[0], columns=ideal_point_names)
@@ -408,12 +503,12 @@ if k_time > 0:
 
 leg_data_cf[var_list].corr()
 
-polarity = pd.DataFrame(fitted_model.get_layer("polarity").get_weights()[0], columns=polarity_names)
-polarity.index = pd.Series(polarity.index).map(vote_data["vote_crosswalk"])
-popularity = pd.DataFrame(fitted_model.get_layer("popularity").get_weights()[0], columns=["popularity"])
-popularity.index = pd.Series(popularity.index).map(vote_data["vote_crosswalk"])
+yes_point = pd.DataFrame(fitted_model.get_layer("yes_point").get_weights()[0], columns=yes_point_names)
+yes_point.index = pd.Series(yes_point.index).map(vote_data["vote_crosswalk"])
+no_point = pd.DataFrame(fitted_model.get_layer("no_point").get_weights()[0], columns=no_point_names)
+no_point.index = pd.Series(no_point.index).map(vote_data["vote_crosswalk"])
 
-pol_pop = pd.merge(polarity, popularity, left_index=True, right_index=True)
+pol_pop = pd.merge(yes_point, no_point, left_index=True, right_index=True)
 pol_pop.describe()
 if data_type == "votes":
     pol_pop["temp_sess"] = pol_pop.index.str.slice(0, 3)
@@ -422,6 +517,7 @@ if data_type == "cosponsor":
 pol_pop.groupby(["temp_sess"]).mean()
 
 fitted_model.layers
+fitted_model.layers[-3].get_weights()
 
 vote_df_eval = vote_df.copy()[["congress", "chamber", "leg_id", "first_session", "last_session", "time_passed"]].drop_duplicates()
 vote_df_eval = pd.merge(vote_df_eval, cf_ideal_points, left_on="leg_id", right_index=True)
