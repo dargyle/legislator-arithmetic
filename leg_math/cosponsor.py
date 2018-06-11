@@ -197,3 +197,5 @@ if random_type == "raw":
     vote_df.to_feather(DATA_PATH + "/govtrack_cosponsor_data.feather")
 elif random_type == "cosponsor":
     vote_df.to_feather(DATA_PATH + "/govtrack_cosponsor_data_smart_oppose.feather")
+
+# TODO: Upweight the things we know to be true (i.e. the yes votes)

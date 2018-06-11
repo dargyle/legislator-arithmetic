@@ -6,14 +6,17 @@ import pickle
 
 import warnings
 
-from keras.layers import Embedding, Reshape, Merge, Dropout, SpatialDropout1D, Dense, Flatten, Input, Dot, LSTM, Add, Subtract, Conv1D, MaxPooling1D, Concatenate, Multiply, BatchNormalization, Lambda
+from keras.layers import Embedding, Reshape, Merge, Dropout, SpatialDropout1D, Dense, Flatten, Input, Dot, LSTM, Add, Subtract, Conv1D, MaxPooling1D, Concatenate, Multiply, BatchNormalization, Lambda, Activation
 from keras.models import Sequential, Model
 from keras.initializers import TruncatedNormal
 from keras import regularizers
 from keras.regularizers import Regularizer
-from keras.callbacks import Callback, EarlyStopping, ModelCheckpoint
+from keras.callbacks import Callback, EarlyStopping, ModelCheckpoint, TerminateOnNaN
 from keras.constraints import Constraint, unit_norm, MinMaxNorm
 from keras.engine.topology import Layer
+from keras.initializers import Constant
+from keras import optimizers
+from keras.utils.generic_utils import get_custom_objects
 
 from keras.models import load_model
 
@@ -21,6 +24,13 @@ from IPython.display import SVG
 from keras.utils.vis_utils import model_to_dot
 
 from keras import backend as K
+
+# from tensorflow.python import debug as tf_debug
+# sess = K.get_session()
+# sess = tf_debug.LocalCLIDebugWrapperSession(sess)
+# # sess.add_tensor_filter("has_inf_or_nan", tf_debug.has_inf_or_nan)
+# # run -f has_inf_or_nan
+# K.set_session(sess)
 
 
 class GetBest(Callback):
@@ -186,17 +196,44 @@ class UnitSphere(Constraint):
 
 DATA_PATH = os.path.expanduser("~/data/leg_math/")
 
-data_type = "votes"
+data_type = "test"
 if data_type == "votes":
     vote_df = pd.read_feather(DATA_PATH + "vote_df_cleaned.feather")
 if data_type == "cosponsor":
     # vote_df = pd.read_feather(DATA_PATH + "cosponsor/govtrack_cosponsor_data.feather")
     vote_df = pd.read_feather(DATA_PATH + "cosponsor/govtrack_cosponsor_data_smart_oppose.feather")
     sponsor_counts = vote_df.groupby("vote_id")["vote"].sum()
-    min_sponsors = 4
+    min_sponsors = 2
     multi_sponsored_bills = sponsor_counts[sponsor_counts >= min_sponsors]
     multi_sponsored_bills.name = "sponsor_counts"
     vote_df = pd.merge(vote_df, multi_sponsored_bills.to_frame(), left_on="vote_id", right_index=True)
+if data_type == "test":
+    roll_call_object = pd.read_csv(DATA_PATH + "/test_votes.csv", index_col=0)
+    vote_df = roll_call_object.replace({1: 1,
+                                        2: 1,
+                                        3: 1,
+                                        4: 0,
+                                        5: 0,
+                                        6: 0,
+                                        7: np.nan,
+                                        8: np.nan,
+                                        9: np.nan,
+                                        0: np.nan})
+    vote_df = vote_df.stack().reset_index()
+    assert not vote_df.isnull().any().any(), "mising codes in votes"
+    vote_df.columns = ["leg_id",  "vote_id", "vote"]
+    vote_df["congress"] = 115
+    vote_df["chamber"] = "s"
+    leg_data = pd.read_csv(DATA_PATH + "/test_legislators.csv", index_col=0)
+    if "partyCode" in leg_data.columns:
+        leg_data["init_value"] = leg_data["partyCode"].map({100: -1,
+                                                            200: 1})
+    else:
+        leg_data["init_value"] = leg_data["party.1"].map({100: -1,
+                                                          200: 1})
+
+    # leg_data["init_value"] = 1
+    vote_df = pd.merge(vote_df, leg_data[["init_value"]], left_on="leg_id", right_index=True)
 
 congress_cutoff = 0
 if congress_cutoff:
@@ -246,7 +283,7 @@ print(vote_data["y"].mean())
 
 n_users = vote_data["J"]
 m_items = vote_data["M"]
-k_dim = 2
+k_dim = 1
 
 # use_popularity = True
 ideal_dropout = 0.0
@@ -256,6 +293,9 @@ leg_input_dropout = 0.0
 bill_input_dropout = 0.0
 
 init_leg_embedding_final = pd.concat([vote_data["init_embedding"]["init_value"] * np.random.rand(vote_data["J"]) for j in range(k_dim)], axis=1)
+if data_type == "test" and k_dim > 1:
+    init_leg_embedding_final.iloc[:, 1] = 0
+    init_leg_embedding_final.iloc[1, 1] = 0.1 * 1.0
 # Make orthogonal
 # init_leg_embedding_final.columns = range(k_dim)
 # x -= x.dot(k) * k / np.linalg.norm(k)**2
@@ -283,7 +323,8 @@ init_leg_embedding_final = pd.concat([vote_data["init_embedding"]["init_value"] 
 
 
 def euc_dist_keras(x, y):
-    return K.sqrt(K.sum(K.square(x - y), axis=-1, keepdims=True))
+    # return K.sqrt(K.sum(K.square(x - y), axis=-1, keepdims=True))
+    return K.sqrt(K.maximum(K.sum(K.square(x - y), axis=-1, keepdims=True), K.epsilon()))
 
 
 def wnom_term(tlist):
@@ -305,7 +346,7 @@ class WnomTerm(Layer):
         # Create a trainable weight variable for this layer.
         self.kernel = self.add_weight(name='kernel',
                                       shape=(1, input_shape[0][1]),
-                                      initializer='uniform',
+                                      initializer=Constant(0.5),  # match original
                                       trainable=True)
         super(WnomTerm, self).build(input_shape)  # Be sure to call this at the end
 
@@ -313,9 +354,72 @@ class WnomTerm(Layer):
         x = tlist[0]
         z = tlist[1]
         # https://stackoverflow.com/questions/47289116/element-wise-multiplication-with-broadcasting-in-keras-custom-layer
+        # x = K.print_tensor(x, message="x is: ")
+        # z = K.print_tensor(z, message="z is: ")
+        self.kernel = K.print_tensor(self.kernel, message="weights are: ")
         temp_sum = K.tf.multiply(K.square(x - z), K.square(self.kernel))
+        temp_sum = K.print_tensor(temp_sum, message="temp_sum is: ")
         distances = K.sqrt(K.sum(temp_sum, axis=1, keepdims=True))
-        return -0.5 * K.exp(distances)
+        distances = K.print_tensor(distances, message="distances is: ")
+        result = K.exp(-0.5 * distances)
+        result = K.print_tensor(result, message="distances is: ")
+        return result
+
+    def compute_output_shape(self, input_shape):
+            return (input_shape[0][0], self.output_dim)
+
+
+class JointWnomTerm(Layer):
+    # TODO: Add unit norm constraint
+    # TODO: What happens if I allow the weights ot be bill specific
+
+    def __init__(self, output_dim, **kwargs):
+        self.output_dim = output_dim
+        super(JointWnomTerm, self).__init__(**kwargs)
+
+    def build(self, input_shape):
+        # Create a trainable weight variable for this layer.
+        self.kernel = self.add_weight(name='kernel',
+                                      shape=(1, input_shape[0][1]),
+                                      initializer=Constant(0.5),  # match original
+                                      trainable=True)
+        super(JointWnomTerm, self).build(input_shape)  # Be sure to call this at the end
+
+    def call(self, tlist):
+        x = tlist[0]
+        z1 = tlist[1]
+        z2 = tlist[2]
+        # self.kernel = K.print_tensor(self.kernel, message="weights are: ")
+        # https://stackoverflow.com/questions/47289116/element-wise-multiplication-with-broadcasting-in-keras-custom-layer
+        temp_sum1 = K.tf.multiply(K.square(x - z1), K.square(self.kernel))
+        # temp_sum1 = K.tf.multiply(euc_dist_keras(x, z1), K.square(self.kernel))
+        # temp_sum1 = K.tf.multiply(K.square(x - z1) + K.constant(1), K.square(self.kernel))
+        # temp_sum1 = K.tf.multiply(K.square(x - z1) + K.epsilon(), K.square(self.kernel))
+        # temp_sum1 = K.tf.multiply(K.maximum(K.square(x - z1), K.epsilon()), K.square(self.kernel))
+        # temp_sum1 = K.tf.multiply(K.square(K.maximum(x - z1, K.epsilon())), K.square(self.kernel))
+        # temp_sum1 = K.print_tensor(temp_sum1, message="temp_sum 1 is: ")
+        # distances1 = K.sqrt(K.sum(temp_sum1, axis=1, keepdims=True))
+        distances1 = K.sum(temp_sum1, axis=1, keepdims=True)
+        # distances1 = K.sqrt(K.sum(temp_sum1, axis=1, keepdims=True) + K.epsilon())
+        # distances1 = K.sqrt(K.maximum(K.sum(temp_sum1, axis=1, keepdims=True), K.constant(1e-9)))
+        # distances1 = K.print_tensor(distances1, message="temp_sum 1 is: ")
+
+        temp_sum2 = K.tf.multiply(K.square(x - z2), K.square(self.kernel))
+        # temp_sum2 = K.tf.multiply(euc_dist_keras(x, z2), K.square(self.kernel))
+        # temp_sum2 = K.tf.multiply(K.square(x - z2) + K.constant(1), K.square(self.kernel))
+        # temp_sum2 = K.tf.multiply(K.square(x - z2) + K.epsilon(), K.square(self.kernel))
+        # temp_sum2 = K.tf.multiply(K.maximum(K.square(x - z2), K.epsilon()), K.square(self.kernel))
+        # temp_sum2 = K.tf.multiply(K.square(K.maximum(x - z2, K.epsilon())), K.square(self.kernel))
+        # temp_sum2 = K.print_tensor(temp_sum2, message="temp_sum 2 is: ")
+        # distances2 = K.sqrt(K.sum(temp_sum2, axis=1, keepdims=True))
+        distances2 = K.sum(temp_sum2, axis=1, keepdims=True)
+        # distances2 = K.sqrt(K.sum(temp_sum2, axis=1, keepdims=True) + K.epsilon())
+        # distances2 = K.sqrt(K.maximum(K.sum(temp_sum2, axis=1, keepdims=True), K.constant(1e-9)))
+        # distances2 = K.print_tensor(distances2, message="temp_sum 1 is: ")
+
+        result = K.exp(-0.5 * distances1) - K.exp(-0.5 * distances2)
+        # result = K.print_tensor(result, message="result is: ")
+        return result
 
     def compute_output_shape(self, input_shape):
             return (input_shape[0][0], self.output_dim)
@@ -335,6 +439,15 @@ def generate_time_input(i):
     time_input = Input(shape=(1, ), name="time_input_{}".format(i))
     return time_input
 
+
+def normal_activation(x):
+    dist = K.tf.distributions.Normal(loc=0.0, scale=1.0)
+    return dist.cdf(x)
+
+get_custom_objects().update({'normal_activation': Activation(normal_activation)})
+
+# K.eval(dist.cdf(1.00))
+# K.eval(K.sigmoid(1.00))
 
 def generate_time_layer(i, leg_input, time_input):
     ideal_points_time = Embedding(input_dim=n_users, output_dim=k_dim, input_length=1, name="ideal_points_time_{}".format(i),
@@ -369,8 +482,8 @@ ideal_points = Embedding(input_dim=n_users, output_dim=k_dim, input_length=1, na
                          # embeddings_regularizer=regularizers.l2(1e-2),
                          # embeddings_constraint=unit_norm(axis=[0, 1]),
                          # embeddings_constraint=UnitSphere(),
-                         embeddings_constraint=MinMaxNorm(min_value=0.0, max_value=1.0, axis=1),
-                         weights=[init_leg_embedding_final.values]
+                         embeddings_constraint=MinMaxNorm(min_value=0.0, max_value=1.0, axis=1, rate=1.0),
+                         weights=[init_leg_embedding_final.values],
                          )(leg_input_drop)
 if ideal_dropout > 0.0:
     ideal_points = Dropout(ideal_dropout)(ideal_points)
@@ -386,31 +499,36 @@ if k_time == 0:
 else:
     main_ideal_points = Add()([ideal_points] + time_layer_list)
 # main_ideal_points = Lambda(standardize, name="norm_ideal_points")(main_ideal_points)
-main_ideal_points = BatchNormalization()(main_ideal_points)
+# main_ideal_points = BatchNormalization()(main_ideal_points)
 
 flat_ideal_points = Reshape((k_dim,))(main_ideal_points)
 
 yes_point = Embedding(input_dim=m_items, output_dim=k_dim, input_length=1, name="yes_point",
-                      embeddings_initializer=TruncatedNormal(mean=0.0, stddev=0.05, seed=None))(bill_input_drop)
+                      embeddings_constraint=MinMaxNorm(min_value=0.0, max_value=1.0, axis=1, rate=1.0),
+                      # embeddings_initializer=TruncatedNormal(mean=0.0, stddev=0.3, seed=None),
+                      )(bill_input_drop)
 
 if yes_point_dropout > 0.0:
     yes_point = Dropout(yes_point_dropout)(yes_point)
 flat_yes_point = Reshape((k_dim,))(yes_point)
 
-
 no_point = Embedding(input_dim=m_items, output_dim=k_dim, input_length=1, name="no_point",
-                     embeddings_initializer=TruncatedNormal(mean=0.0, stddev=0.05, seed=None))(bill_input_drop)
+                     embeddings_constraint=MinMaxNorm(min_value=0.0, max_value=1.0, axis=1, rate=1.0),
+                     # embeddings_initializer=TruncatedNormal(mean=0.0, stddev=0.3, seed=None),
+                     )(bill_input_drop)
 if no_point_dropout > 0.0:
     no_point = Dropout(no_point_dropout)(no_point)
 flat_no_point = Reshape((k_dim,))(no_point)
 
+# yes_term = WnomTerm(output_dim=1, trainable=True, name="yes_term")([flat_ideal_points, flat_yes_point])
+# no_term = WnomTerm(output_dim=1, trainable=True, name="no_term")([flat_ideal_points, flat_no_point])
+#
+# combined = Subtract()([yes_term, no_term])
 
-yes_term = WnomTerm(output_dim=1, trainable=True)([flat_ideal_points, flat_yes_point])
-no_term = WnomTerm(output_dim=1, trainable=True)([flat_ideal_points, flat_no_point])
+combined = JointWnomTerm(output_dim=1, trainable=True, name="wnom_term")([flat_ideal_points, flat_yes_point, flat_no_point])
 
-combined = Subtract()([yes_term, no_term])
-
-main_output = Dense(1, activation="sigmoid", name="main_output", use_bias=False)(combined)
+# combined = K.print_tensor(combined, message="combined is: ")
+main_output = Dense(1, activation="normal_activation", name="main_output", use_bias=False, kernel_initializer=Constant(15))(combined)
 
 model = Model(inputs=[leg_input, bill_input] + time_input_list, outputs=[main_output])
 model.summary()
@@ -418,9 +536,17 @@ model.summary()
 SVG(model_to_dot(model).create(prog='dot', format='svg'))
 
 # model.compile(loss='mse', optimizer='adamax')
-model.compile(loss='binary_crossentropy', optimizer='nadam', metrics=['accuracy'])
+model.compile(loss='binary_crossentropy', optimizer='Nadam', metrics=['accuracy'])
 
-sample_weights = (1.0 * vote_data["y"].shape[0]) / (len(np.unique(vote_data["y"])) * np.bincount(vote_data["y"]))
+if data_type == "cosponsor":
+    # base_weight = 1
+    # upweight_yes = 100
+    # sample_weights = [base_weight, base_weight * upweight_yes]
+    sample_weights = (1.0 * vote_data["y"].shape[0]) / (len(np.unique(vote_data["y"])) * np.bincount(vote_data["y"]))
+if data_type == "votes":
+    sample_weights = (1.0 * vote_data["y"].shape[0]) / (len(np.unique(vote_data["y"])) * np.bincount(vote_data["y"]))
+if data_type == "test":
+    sample_weights = [1, 1]
 
 # MODEL_WEIGHTS_FILE = ("~/temp/" + "collab_filter_example.h5")
 # callbacks = [EarlyStopping('val_loss', patience=5),
@@ -430,12 +556,14 @@ sample_weights = (1.0 * vote_data["y"].shape[0]) / (len(np.unique(vote_data["y"]
 #                     class_weight={0: sample_weights[0],
 #                                   1: sample_weights[1]})
 
-callbacks = [EarlyStopping('val_loss', patience=10),
-             GetBest(monitor='val_loss', verbose=1, mode='min')]
-history = model.fit([vote_data["j"], vote_data["m"]] + vote_data["time_passed"], vote_data["y"], epochs=500, batch_size=32768,
-                    validation_split=.2, verbose=2, callbacks=callbacks,
+callbacks = [EarlyStopping('val_loss', patience=20),
+             GetBest(monitor='val_loss', verbose=1, mode='auto'),
+             TerminateOnNaN()]
+history = model.fit([vote_data["j"], vote_data["m"]] + vote_data["time_passed"], vote_data["y"], epochs=2000, batch_size=32768,
+                    validation_split=0.2, verbose=2, callbacks=callbacks,
                     class_weight={0: sample_weights[0],
                                   1: sample_weights[1]})
+
 
 # model.save(DATA_PATH + "keras_result.h5")
 model.save_weights(DATA_PATH + 'my_model_weights.h5')
@@ -453,11 +581,12 @@ with open(DATA_PATH + "train_history.pkl", 'rb') as file_pi:
 
 # %matplotlib inline
 # pd.DataFrame(fitted_model.layers[0].layers[0].get_weights()[0]).hist()
-pd.DataFrame(fitted_model.predict([vote_data["j"], vote_data["m"]] + vote_data["time_passed"]))[0].hist()
+# pd.DataFrame(fitted_model.predict([vote_data["j"], vote_data["m"]] + vote_data["time_passed"]))[0].hist()
 
 losses = pd.DataFrame({'epoch': [i + 1 for i in range(len(history_dict['loss']))],
                        'training': [loss for loss in history_dict['loss']],
-                       'validation': [loss for loss in history_dict['val_loss']]})
+                       'validation': [loss for loss in history_dict['val_loss']],
+                       })
 ax = losses.iloc[1:, :].plot(x='epoch', figsize=[7, 10], grid=True)
 ax.set_ylabel("log loss")
 ax.set_ylim([0.0, 3.0])
@@ -465,20 +594,57 @@ ax.set_ylim([0.0, 3.0])
 
 losses = pd.DataFrame({'epoch': [i + 1 for i in range(len(history_dict['acc']))],
                        'training': [loss for loss in history_dict['acc']],
-                       'validation': [loss for loss in history_dict['val_acc']]})
+                       'validation': [loss for loss in history_dict['val_acc']],
+                       })
 ax = losses.iloc[1:, :].plot(x='epoch', figsize=[7, 10], grid=True)
 ax.set_ylabel("accuracy")
 ax.set_ylim([0.0, 3.0])
 
-leg_data = pd.read_feather(DATA_PATH + "leg_data.feather")
-leg_bio_data = leg_data[["leg_id", "state_icpsr", "bioname", "party_code", "nominate_dim1", "nominate_dim2"]].drop_duplicates()
-leg_bio_data.columns
+if data_type == "votes" or data_type == "cosponsor":
+    leg_data = pd.read_feather(DATA_PATH + "leg_data.feather")
+
+if data_type == "test":
+    test_actual = False
+    if test_actual:
+        if k_dim == 1:
+            leg_data = pd.read_csv(DATA_PATH + "/test_legislators.csv", index_col=0).reset_index()
+        if k_dim == 2:
+            leg_data = pd.read_csv(DATA_PATH + "/test_legislators.csv", index_col=0).reset_index()
+    else:
+        if k_dim == 1:
+            leg_data = pd.read_csv(DATA_PATH + "/wnom1D_results.csv", index_col=0)
+        if k_dim == 2:
+            leg_data = pd.read_csv(DATA_PATH + "/wnom2D_results.csv", index_col=0)
+        leg_data = leg_data.reset_index()
+
+    leg_data = leg_data.rename(columns={"index": "leg_id",
+                                        "icpsrState": "state_icpsr",
+                                        "coord1D": "nominate_dim1",
+                                        "coord2D": "nominate_dim2",
+                                        "party.1": "party_code",
+                                        "partyCode": "party_code"})
+    leg_data["bioname"] = ""
+
+    # fitted_model.get_layer("main_output").get_weights()[0]
+    # fitted_model.get_layer("yes_term").get_weights()[0]
+    # fitted_model.get_layer("no_term").get_weights()[0]
+    # fitted_model.get_layer("yes_point").get_weights()[0]
+    fitted_model.get_layer("main_output").get_weights()[0]
+    fitted_model.layers[-2].get_weights()[0]
+    # np.exp(0.5)
+if k_dim == 1:
+    leg_bio_data = leg_data[["leg_id", "state_icpsr", "bioname", "party_code", "nominate_dim1"]].drop_duplicates()
+if k_dim > 1:
+    leg_bio_data = leg_data[["leg_id", "state_icpsr", "bioname", "party_code", "nominate_dim1", "nominate_dim2"]].drop_duplicates()
 
 ideal_point_names = ["ideal_{}".format(j) for j in range(1, k_dim + 1)]
 drift_names = ["drift_{}".format(j) for j in range(1, k_time + 1)]
 yes_point_names = ["yes_point_{}".format(j) for j in range(1, k_dim + 1)]
 no_point_names = ["no_point_{}".format(j) for j in range(1, k_dim + 1)]
-var_list = ["nominate_dim1", "nominate_dim2"] + ideal_point_names + drift_names
+if k_dim == 1:
+    var_list = ["nominate_dim1"] + ideal_point_names + drift_names
+if k_dim > 1:
+    var_list = ["nominate_dim1", "nominate_dim2"] + ideal_point_names + drift_names
 
 cf_ideal_points = pd.DataFrame(fitted_model.get_layer("ideal_points").get_weights()[0], columns=ideal_point_names)
 cf_ideal_points.index = pd.Series(cf_ideal_points.index).map(vote_data["leg_crosswalk"])
@@ -514,6 +680,8 @@ if data_type == "votes":
     pol_pop["temp_sess"] = pol_pop.index.str.slice(0, 3)
 if data_type == "cosponsor":
     pol_pop["temp_sess"] = pol_pop.index.str[-3:]
+if data_type == "test":
+    pol_pop["temp_sess"] = 115
 pol_pop.groupby(["temp_sess"]).mean()
 
 fitted_model.layers
@@ -536,7 +704,8 @@ if k_time > 0:
     zxcv[zxcv["leg_id"] == 20735]
     zxcv.plot(kind="scatter", x="time_ideal_1", y="time_ideal_2")
 
-leg_data_cf.plot(kind="scatter", x="ideal_1", y="ideal_2")
+if k_dim > 1:
+    leg_data_cf.plot(kind="scatter", x="ideal_1", y="ideal_2")
 leg_data_cf.plot(kind="scatter", x="nominate_dim1", y="ideal_1")
 
 from pandas.plotting import scatter_matrix
@@ -548,10 +717,10 @@ from pandas.plotting import scatter_matrix
 # leg_data_cf.loc[leg_data_cf["party_code"] == 200, "color_list"] = "r"
 # leg_data_cf.plot(kind="scatter", x="nominate_dim1", y=1, c="color_list")
 
-leg_data_cf.loc[leg_data_cf["party_code"] == 200, "ideal_1"].hist()
-leg_data_cf.loc[leg_data_cf["party_code"] == 200, "ideal_2"].hist()
-ax = leg_data_cf[leg_data_cf["party_code"] == 100].plot.scatter(x="ideal_1", y="ideal_2", color='DarkBlue', label='Dem')
-leg_data_cf[leg_data_cf["party_code"] == 200].plot.scatter(x="nominate_dim1", y="ideal_2", color='Red', label='Rep')
+# leg_data_cf.loc[leg_data_cf["party_code"] == 200, "ideal_1"].hist()
+# leg_data_cf.loc[leg_data_cf["party_code"] == 200, "ideal_2"].hist()
+# ax = leg_data_cf[leg_data_cf["party_code"] == 100].plot.scatter(x="ideal_1", y="ideal_2", color='DarkBlue', label='Dem')
+# leg_data_cf[leg_data_cf["party_code"] == 200].plot.scatter(x="nominate_dim1", y="ideal_2", color='Red', label='Rep')
 
 import seaborn as sns
 sns.set(style="ticks")
@@ -564,4 +733,11 @@ leg_data_cf[var_list].corr()
 
 leg_data_cf.groupby("party_code").mean()
 
-leg_data_cf[0].hist()
+
+leg_data_cf
+A = leg_data_cf.dropna()
+x = np.linalg.lstsq(A[ideal_point_names].values, A[["nominate_dim1", "nominate_dim2"]].values)[0]
+
+y_hat = A[ideal_point_names].values.dot(x)
+
+pd.concat([A[["nominate_dim1", "nominate_dim2"]], pd.DataFrame(y_hat, index=A.index)], axis=1).corr()
