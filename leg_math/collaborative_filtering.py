@@ -203,11 +203,11 @@ print(vote_data["y"].mean())
 
 n_users = vote_data["J"]
 m_items = vote_data["M"]
-k_dim = 5
+k_dim = 2
 
 use_popularity = True
-ideal_dropout = 0.0
-polarity_dropout = 0.0
+ideal_dropout = 0.2
+polarity_dropout = 0.2
 leg_input_dropout = 0.0
 bill_input_dropout = 0.0
 

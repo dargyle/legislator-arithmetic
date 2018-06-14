@@ -8,9 +8,12 @@ DATA_PATH = os.path.expanduser("~/data/leg_math/")
 
 n_leg = 100
 n_bills = 1000
-k_dim = 1
+k_dim = 3
 
-w = np.repeat(0.5, k_dim)
+# w = np.repeat(0.5, k_dim)
+w = np.array([1.5, 0.5, 0.5])
+# Impose sum to one
+w = w / w.sum()
 beta = 15.0
 
 cdf_type = "norm"
@@ -32,6 +35,10 @@ ideal_points["coord1D"] = ideal_points["coord1D"] * ideal_points["partyCode"].ma
 if k_dim > 1:
     for i in range(2, k_dim + 1):
         ideal_points[f"coord{i}D"] = ideal_points[f"coord{i}D"] * np.random.choice([-1, 1], size=(n_leg, ))
+
+# Renorm samples to have max norm of 1
+max_norm = metric = np.sqrt((ideal_points.filter(regex="coord") ** 2).sum(axis=1)).max()
+ideal_points = ideal_points / max_norm
 
 # Get random bill points
 bill_ids = "bill_" + pd.Series(np.arange(0, n_bills)).astype(str).str.zfill(len(str(n_bills)))
@@ -57,6 +64,7 @@ for i in range(1, k_dim + 1):
     votes[f"yes_diff_{i}D"] = (votes[f"coord{i}D"] - votes[f"yes_coord{i}D"]) ** 2
     votes[f"no_diff_{i}D"] = (votes[f"coord{i}D"] - votes[f"no_coord{i}D"]) ** 2
 
+votes.filter(regex="yes_diff").describe()
 yes_term = (votes.filter(regex="yes_diff") * w**2).sum(axis=1)
 no_term = (votes.filter(regex="no_diff") * w**2).sum(axis=1)
 

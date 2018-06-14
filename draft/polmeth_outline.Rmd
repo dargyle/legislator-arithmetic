@@ -1,0 +1,67 @@
+---
+# title: "polmeth_outline"
+# author: "Daniel Argyle"
+# date: "6/12/2018"
+# output: html_document
+output: 
+  pdf_document:
+    citation_package: natbib
+    keep_tex: true
+    fig_caption: true
+    latex_engine: pdflatex
+    template: ~/packages/svm-r-markdown-templates/svm-latex-ms.tex
+title: "Legislator Arithmetic"
+thanks: "The code for this method is available at the author's github repository."
+author:
+- name: Daniel Argyle
+  affiliation: FiscalNote
+abstract: "This document provides an introduction to R Markdown, argues for its..."
+keywords: "ideal point estimation"
+date: "`r format(Sys.time(), '%B %d, %Y')`"
+geometry: margin=1in
+fontfamily: mathpazo
+fontsize: 11pt
+# spacing: double
+# bibliography: ~/Dropbox/master.bib
+# biblio-style: apsr
+---
+
+```{r setup, include=FALSE}
+# Setup a python instance to use
+library(reticulate)
+```
+
+```{python, include=FALSE}
+answer = '42'
+```
+
+# Introduction
+
+# Existing methods
+I come not to dismiss but to augment
+
+[Insert the long illustrious history of ideal point estimation here]
+
+# Technical Details
+
+# Results
+
+## My method and WNOMINATE packages are similar
+
+## Let's do some things that weren't really feasible before
+
+1. I implemented DW-NOMINATE as a neural network
+    - Why? Because I could! But also because it's a nice platform for this kind of optimization.
+    - It scales much better than existing implementations
+    - It's extensible in very interesting ways
+2. All ideal point models are (a bit) overfit.
+    - At some point the algorithm starts to make marginal improvements to the parameters that don't improve out of sample performance
+    - Out of sample performance matters much more than in sample (e.g. if we only cared about in sample we'd just add dimensions until we cam predict it perfectly)
+    - Out of sample performance is a useful metric for evaluating modeling choices (adding another dimension, adding a time component, adding an external variable)
+
+this is inline `r py$answer` and 
+
+```{r}
+py$answer
+```
+
