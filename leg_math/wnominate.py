@@ -31,7 +31,7 @@ from leg_math.keras_helpers import GetBest, MOAmodels
 # Data processing
 DATA_PATH = os.path.expanduser("~/data/leg_math/")
 
-data_type = "test"
+data_type = "votes"
 if data_type == "votes":
     vote_df = pd.read_feather(DATA_PATH + "vote_df_cleaned.feather")
 if data_type == "cosponsor":
@@ -92,7 +92,7 @@ vote_crosswalk_rev = dict((v, k) for k, v in vote_crosswalk.items())
 vote_df_temp["leg_id"] = vote_df_temp["leg_id"].map(leg_crosswalk_rev)
 vote_df_temp["vote_id"] = vote_df_temp["vote_id"].map(vote_crosswalk_rev)
 # Shuffle the order of the vote data
-vote_df_temp = vote_df_temp.sample(frac=1, replace=False)
+vote_df_temp = vote_df_temp.sample(frac=1, replace=False, random_state=42)
 
 init_embedding = vote_df_temp[["leg_id", "init_value"]].drop_duplicates("leg_id").set_index("leg_id").sort_index()
 
@@ -118,7 +118,7 @@ print(vote_data["y"].mean())
 
 n_leg = vote_data["J"]
 n_votes = vote_data["M"]
-k_dim = 4
+k_dim = 5
 
 # use_popularity = True
 ideal_dropout = 0.0
@@ -161,7 +161,7 @@ SVG(model_to_dot(model).create(prog='dot', format='svg'))
 # model.compile(loss='mse', optimizer='adamax')
 model.compile(loss='binary_crossentropy', optimizer='Nadam', metrics=['accuracy'])
 
-callbacks = [EarlyStopping('loss', patience=10),
+callbacks = [EarlyStopping('val_loss', patience=20),
              GetBest(monitor='val_acc', verbose=1, mode='auto'),
              TerminateOnNaN()]
 history = model.fit([vote_data["j"], vote_data["m"]] + vote_data["time_passed"], vote_data["y"], epochs=2000, batch_size=32768,
@@ -183,6 +183,8 @@ fitted_model = model
 
 with open(DATA_PATH + "train_history.pkl", 'rb') as file_pi:
         history_dict = pickle.load(file_pi)
+
+fitted_model.evaluate([vote_data["j"], vote_data["m"]] + vote_data["time_passed"], vote_data["y"], batch_size=10000)
 
 # %matplotlib inline
 # pd.DataFrame(fitted_model.layers[0].layers[0].get_weights()[0]).hist()
@@ -208,6 +210,8 @@ ax.set_ylim([0.0, 3.0])
 
 if data_type == "votes" or data_type == "cosponsor":
     leg_data = pd.read_feather(DATA_PATH + "leg_data.feather")
+    col_names = (["leg_id", "state_icpsr", "bioname", "party_code"] +
+                 [f"nominate_dim{i}" for i in range(1, 3)])
 
 if data_type == "test":
     test_actual = False
@@ -235,9 +239,9 @@ if data_type == "test":
     # fitted_model.get_layer("no_term").get_weights()[0]
     # fitted_model.get_layer("yes_point").get_weights()[0]
     # np.exp(0.5)
-col_names = (["leg_id", "state_icpsr", "bioname", "party_code"] +
-             [f"nominate_dim{i}" for i in range(1, k_dim + 1)] +
-             [f"coord{i}D" for i in range(1, k_dim + 1)])
+    col_names = (["leg_id", "state_icpsr", "bioname", "party_code"] +
+                 [f"nominate_dim{i}" for i in range(1, k_dim + 1)] +
+                 [f"coord{i}D" for i in range(1, k_dim + 1)])
 leg_bio_data = leg_data[col_names].drop_duplicates()
 
 fitted_model.get_layer("main_output").get_weights()[0]
@@ -249,7 +253,10 @@ drift_names = ["drift_{}".format(j) for j in range(1, k_time + 1)]
 yes_point_names = ["yes_point_{}".format(j) for j in range(1, k_dim + 1)]
 no_point_names = ["no_point_{}".format(j) for j in range(1, k_dim + 1)]
 
-var_list = [f"nominate_dim{i}" for i in range(1, k_dim + 1)] + ideal_point_names + drift_names
+if data_type == "test":
+    var_list = [f"nominate_dim{i}" for i in range(1, k_dim + 1)] + ideal_point_names + drift_names
+if data_type == "votes" or data_type == "cosponsor":
+    var_list = [f"nominate_dim{i}" for i in range(1, 3)] + ideal_point_names + drift_names
 
 cf_ideal_points = pd.DataFrame(fitted_model.get_layer("ideal_points").get_weights()[0], columns=ideal_point_names)
 cf_ideal_points.index = pd.Series(cf_ideal_points.index).map(vote_data["leg_crosswalk"])
@@ -335,8 +342,9 @@ sns.pairplot(leg_data_cf[leg_data_cf["party_code"].isin([100, 200])],
              diag_kind="kde", plot_kws=dict(alpha=0.25), markers=".")
 
 leg_data_cf[var_list].corr()
-leg_data_cf[[f"coord{i}D" for i in range(1, k_dim + 1)] + [f"nominate_dim{i}" for i in range(1, k_dim + 1)]].corr()
-leg_data_cf[[f"coord{i}D" for i in range(1, k_dim + 1)] + [f"ideal_{i}" for i in range(1, k_dim + 1)]].corr()
+if data_type == "test":
+    leg_data_cf[[f"coord{i}D" for i in range(1, k_dim + 1)] + [f"nominate_dim{i}" for i in range(1, k_dim + 1)]].corr()
+    leg_data_cf[[f"coord{i}D" for i in range(1, k_dim + 1)] + [f"ideal_{i}" for i in range(1, k_dim + 1)]].corr()
 
 leg_data_cf.groupby("party_code").mean()
 
@@ -359,3 +367,97 @@ asdf = pd.merge(pd.read_csv(DATA_PATH + "/wnom2D_rollcalls.csv", index_col=0), m
 asdf.plot(kind="scatter", x="midpoint1D", y="mid1")
 asdf[["midpoint1D", "midpoint2D", "mid1", "mid2"]].corr()
 sns.pairplot(asdf, vars=["midpoint1D", "midpoint2D", "mid1", "mid2"], diag_kind="kde", plot_kws=dict(alpha=0.25), markers=".")
+
+
+from sklearn.cluster import KMeans
+from sklearn.metrics import silhouette_score
+A = leg_data_cf.set_index("leg_id").filter(regex="ideal")
+inertia = pd.DataFrame()
+for k in range(2, 21, 2):
+    print(k)
+    k_means = KMeans(n_clusters=k)
+    k_means_fit = k_means.fit(A)
+    inertia.loc[k, "inertia"] = k_means_fit.inertia_
+    pred_cluster = k_means_fit.predict(leg_data_cf.set_index("leg_id").filter(regex="ideal"))
+    inertia.loc[k, "silhouette_score"] = silhouette_score(A, pred_cluster)
+inertia["inertia"].plot()
+pd.Series(k_means_fit.predict(leg_data_cf.set_index("leg_id").filter(regex="ideal"))).value_counts()
+
+
+
+
+from sklearn.manifold import TSNE
+tsne = TSNE()
+tsne_fit = tsne.fit(A.sample(500))
+
+tsne_result = pd.DataFrame(tsne.fit_transform(A))
+k_means = KMeans(n_clusters=6)
+k_means_cluster = k_means.fit_predict(A)
+
+plot_data = tsne_result.copy()
+plot_data.columns = ["x", "y"]
+plot_data["c"] = k_means_cluster
+
+plot_data.plot(kind="scatter", x="x", y="y", c="c", colormap="Set1")
+
+leg_data_cf["cluster"] = k_means_cluster
+
+leg_data_cf[leg_data_cf["cluster"] == 0]["party_code"].value_counts()
+leg_data_cf[leg_data_cf["cluster"] == 0].describe()
+leg_data_cf[leg_data_cf["cluster"] == 1]["party_code"].value_counts()
+leg_data_cf[leg_data_cf["cluster"] == 1].describe()
+leg_data_cf[leg_data_cf["cluster"] == 2]["party_code"].value_counts()
+leg_data_cf[leg_data_cf["cluster"] == 2].describe()
+leg_data_cf[leg_data_cf["cluster"] == 3]["party_code"].value_counts()
+leg_data_cf[leg_data_cf["cluster"] == 3].describe()
+leg_data_cf[leg_data_cf["cluster"] == 5]["party_code"].value_counts()
+leg_data_cf[leg_data_cf["cluster"] == 8].describe()
+
+leg_data_cf[leg_data_cf["bioname"].str.contains("CALHOUN, John")]
+leg_data_cf[leg_data_cf["bioname"].str.contains("DOUGLAS, S")]
+
+leg_data_cf[leg_data_cf["bioname"].str.contains("LEE, Mike")]
+leg_data_cf[leg_data_cf["bioname"].str.contains("PAUL, Rand")]
+leg_data_cf[leg_data_cf["bioname"].str.contains("CRUZ, ")]
+leg_data_cf[leg_data_cf["bioname"].str.contains("COLLINS, Susan")]
+
+leg_data_cf[leg_data_cf["bioname"].str.contains("MEADOW")]
+leg_data_cf[leg_data_cf["bioname"].str.contains("RYAN, Paul")]
+leg_data_cf[leg_data_cf["bioname"].str.contains("AMASH")]
+leg_data_cf[leg_data_cf["bioname"].str.contains("POMPEO")]
+
+leg_data_cf[leg_data_cf["bioname"].str.contains("JOHNSON, Lynd")]
+
+leg_data_cf[leg_data_cf["bioname"].str.contains("THURMOND")]
+leg_data_cf[leg_data_cf["bioname"].str.contains("BYRD, Rober")]
+leg_data_cf[leg_data_cf["bioname"].str.contains("HATCH, Orrin")]
+
+leg_data_cf[leg_data_cf["bioname"].str.contains("LINCOLN")]
+
+leg_data_cf[leg_data_cf["bioname"].str.contains("BRYAN, Willia")]
+leg_data_cf[leg_data_cf["bioname"].str.contains("LONG, H")]
+
+leg_data_cf[leg_data_cf["bioname"].str.contains("CARTER, B")]
+
+leg_data_cf[leg_data_cf["bioname"].str.contains("CLINTON, H")]
+leg_data_cf[leg_data_cf["bioname"].str.contains("OBAMA, ")]
+leg_data_cf[leg_data_cf["bioname"].str.contains("SCHUMER, ")]
+leg_data_cf[leg_data_cf["bioname"].str.contains("SANDERS, B")]
+leg_data_cf[leg_data_cf["bioname"].str.contains("WARREN, El")]
+leg_data_cf[leg_data_cf["bioname"].str.contains("HARRIS, Kam")]
+leg_data_cf[leg_data_cf["bioname"].str.contains("BOOKER, C")]
+
+leg_data_cf[leg_data_cf["bioname"].str.contains("CRAIG, L")]
+leg_data_cf[leg_data_cf["bioname"].str.contains("RANKIN, Jean")]
+
+from sklearn.metrics.pairwise import pairwise_distances
+leg_specific_data = leg_data_cf.copy()
+leg_specific_data["distance"] = pairwise_distances(leg_data_cf.loc[[20977], ideal_point_names], leg_data_cf[ideal_point_names])[0]
+leg_specific_data.sort_values("distance")
+leg_specific_data[leg_specific_data["last_session"] == 115].sort_values("distance")
+
+leg_data_cf[leg_data_cf["last_session"] == 115].groupby(["party_code", "cluster"])["leg_id"].count()
+
+leg_data_cf["cluster"].value_counts()
+leg_data_cf.groupby(["cluster", "party_code"])["leg_id"].count().loc[4]
+leg_data_cf[(leg_data_cf["cluster"] == 4) & (leg_data_cf["party_code"] == 100)]
