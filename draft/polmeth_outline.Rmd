@@ -30,7 +30,7 @@ fontsize: 11pt
 # Setup a python instance to use
 library(reticulate)
 ```
-
+wnom1
 ```{python, include=FALSE}
 answer = '42'
 ```

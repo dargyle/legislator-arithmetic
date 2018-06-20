@@ -32,7 +32,7 @@ from leg_math.keras_helpers import GetBest, MOAmodels
 DATA_PATH = os.path.expanduser("~/data/leg_math/")
 
 
-def process_data(data_type="test", congress_cutoff=0, k_dim=1, k_time=0, return_vote_df=False):
+def process_data(data_type="test", congress_cutoff=0, k_dim=1, k_time=0, return_vote_df=False, validation_split=0.2):
     if data_type == "votes":
         vote_df = pd.read_feather(DATA_PATH + "vote_df_cleaned.feather")
     if data_type == "cosponsor":
@@ -92,19 +92,28 @@ def process_data(data_type="test", congress_cutoff=0, k_dim=1, k_time=0, return_
     vote_df_temp["leg_id"] = vote_df_temp["leg_id"].map(leg_crosswalk_rev)
     vote_df_temp["vote_id"] = vote_df_temp["vote_id"].map(vote_crosswalk_rev)
     # Shuffle the order of the vote data
+    # THIS IS IMPORTANT, otherwise will_select just most recent bills
     vote_df_temp = vote_df_temp.sample(frac=1, replace=False, random_state=42)
 
     init_embedding = vote_df_temp[["leg_id", "init_value"]].drop_duplicates("leg_id").set_index("leg_id").sort_index()
 
     assert not vote_df_temp.isnull().any().any(), "Missing value in data"
 
+    N = len(vote_df_temp)
+    key_index = round(0.2 * N)
+    time_passed = [(vote_df_temp["time_passed"] ** i).values for i in range(1, k_time + 1)]
+
     vote_data = {'J': len(leg_ids),
                  'M': len(vote_ids),
-                 'N': len(vote_df_temp),
-                 'j': vote_df_temp["leg_id"].values,
-                 'm': vote_df_temp["vote_id"].values,
-                 'y': vote_df_temp["vote"].astype(int).values,
-                 'time_passed': [(vote_df_temp["time_passed"] ** i).values for i in range(1, k_time + 1)],
+                 'N': N,
+                 'j_train': vote_df_temp["leg_id"].values[:(N - key_index)],
+                 'j_test': vote_df_temp["leg_id"].values[-key_index:],
+                 'm_train': vote_df_temp["vote_id"].values[:(N - key_index)],
+                 'm_test': vote_df_temp["vote_id"].values[-key_index:],
+                 'y_train': vote_df_temp["vote"].astype(int).values[:(N - key_index)],
+                 'y_test': vote_df_temp["vote"].astype(int).values[-key_index:],
+                 'time_passed_train': [i[:(N - key_index)] for i in time_passed],
+                 'time_passed_test': [i[-key_index:] for i in time_passed],
                  'init_embedding': init_embedding,
                  'vote_crosswalk': vote_crosswalk,
                  'leg_crosswalk': leg_crosswalk}
@@ -116,110 +125,104 @@ def process_data(data_type="test", congress_cutoff=0, k_dim=1, k_time=0, return_
 
     vote_data['init_embedding'] = init_leg_embedding_final
 
-    if data_type == "cosponsor":
-        # base_weight = 1
-        # upweight_yes = 100
-        # sample_weights = [base_weight, base_weight * upweight_yes]
-        sample_weights = (1.0 * vote_data["y"].shape[0]) / (len(np.unique(vote_data["y"])) * np.bincount(vote_data["y"]))
-    if data_type == "votes":
-        sample_weights = (1.0 * vote_data["y"].shape[0]) / (len(np.unique(vote_data["y"])) * np.bincount(vote_data["y"]))
-    if data_type == "test":
-        sample_weights = (1.0 * vote_data["y"].shape[0]) / (len(np.unique(vote_data["y"])) * np.bincount(vote_data["y"]))
-
-    vote_data["sample_weights"] = sample_weights
-
     if return_vote_df:
         return vote_data, vote_df
     else:
         return vote_data
 
 
-data_params = {
-               "data_type": "votes",
-               "congress_cutoff": 0,
-               "k_dim": 2,
-               "k_time": 1,
-               }
+for i in range(1, 8):
+    data_params = {
+                   "data_type": "votes",
+                   "congress_cutoff": 0,
+                   "k_dim": i,
+                   "k_time": 0,
+                   }
 
-vote_data, vote_df = process_data(**data_params, return_vote_df=False)
-model_params = {
-                "n_leg": vote_data["J"],
-                "n_votes": vote_data["M"],
-                "k_dim": data_params["k_dim"],
-                "k_time": data_params["k_time"],
-                "init_leg_embedding": vote_data["init_embedding"],
-                "yes_point_dropout": 0.0,
-                "no_point_dropout": 0.0,
-                }
+    vote_data = process_data(**data_params, return_vote_df=False)
+    # vote_data, vote_df = process_data(**data_params, return_vote_df=True)
+    model_params = {
+                    "n_leg": vote_data["J"],
+                    "n_votes": vote_data["M"],
+                    "k_dim": data_params["k_dim"],
+                    "k_time": data_params["k_time"],
+                    "init_leg_embedding": vote_data["init_embedding"],
+                    "yes_point_dropout": 0.0,
+                    "no_point_dropout": 0.0,
+                    }
 
-print("N Legislators: {}".format(vote_data["J"]))
-print("N Votes: {}".format(vote_data["M"]))
-print("N: {}".format(vote_data["N"]))
+    print("N Legislators: {}".format(vote_data["J"]))
+    print("N Votes: {}".format(vote_data["M"]))
+    print("N: {}".format(vote_data["N"]))
 
-print("Let's do a keras cf example")
-print(vote_data["y"].mean())
+    print("Let's do a keras cf example")
+    print(vote_data["y_train"].mean())
 
 
-model = MOAmodels(**model_params)
+    model = MOAmodels(**model_params)
 
-model.summary()
+    model.summary()
 
-SVG(model_to_dot(model).create(prog='dot', format='svg'))
+    SVG(model_to_dot(model).create(prog='dot', format='svg'))
 
-# model.compile(loss='mse', optimizer='adamax')
-model.compile(loss='binary_crossentropy', optimizer='Nadam', metrics=['accuracy'])
+    # model.compile(loss='mse', optimizer='adamax')
+    model.compile(loss='binary_crossentropy', optimizer='Nadam', metrics=['accuracy'])
 
-callbacks = [EarlyStopping('val_loss', patience=50),
-             GetBest(monitor='val_acc', verbose=1, mode='auto'),
-             TerminateOnNaN()]
-history = model.fit([vote_data["j"], vote_data["m"]] + vote_data["time_passed"], vote_data["y"], epochs=2000, batch_size=32768,
-                    validation_split=0.2, verbose=2, callbacks=callbacks,
-                    class_weight={0: vote_data["sample_weights"][0],
-                                  1: vote_data["sample_weights"][1]})
+    sample_weights = (1.0 * vote_data["y_train"].shape[0]) / (len(np.unique(vote_data["y_train"])) * np.bincount(vote_data["y_train"]))
 
-# TODO: Calculate the relevant metrics and optionally save
-params_and_results = data_params.copy()
-params_and_results.update(model_params)
-params_and_results.pop("init_leg_embedding")
+    callbacks = [EarlyStopping('val_loss', patience=50),
+                 GetBest(monitor='val_acc', verbose=1, mode='auto'),
+                 TerminateOnNaN()]
+    x_train = [vote_data["j_train"], vote_data["m_train"]] + vote_data["time_passed_train"]
+    x_test = [vote_data["j_test"], vote_data["m_test"]] + vote_data["time_passed_test"]
+    history = model.fit(x_train, vote_data["y_train"], epochs=2000, batch_size=32768,
+                        validation_data=(x_test, vote_data["y_test"]), verbose=2, callbacks=callbacks,
+                        class_weight={0: sample_weights[0],
+                                      1: sample_weights[1]})
 
-train_metrics = fitted_model.evaluate([vote_data["j"][:(vote_data["N"] - key_index)],
-                                       vote_data["m"][:(vote_data["N"] - key_index)]] + [i[:(vote_data["N"] - key_index)] for i in vote_data["time_passed"]],
-                                       vote_data["y"][:(vote_data["N"] - key_index )], batch_size=10000)
-params_and_results["loss"] = train_metrics[0]
-params_and_results["acc"] = train_metrics[1]
-test_metrics = fitted_model.evaluate([vote_data["j"][-key_index:],
-                                      vote_data["m"][-key_index:]] + [i[-key_index:] for i in vote_data["time_passed"]],
-                                      vote_data["y"][-key_index:], batch_size=10000)
-params_and_results["val_loss"] = test_metrics[0]
-params_and_results["val_acc"] = test_metrics[1]
+    # TODO: Calculate the relevant metrics and optionally save
+    params_and_results = data_params.copy()
+    params_and_results.update(model_params)
+    params_and_results.pop("init_leg_embedding")
 
-# model.save(DATA_PATH + "keras_result.h5")
-model.save_weights(DATA_PATH + 'my_model_weights.h5')
+    train_metrics = model.evaluate(x_train, vote_data["y_train"], batch_size=10000)
+    params_and_results["loss"] = train_metrics[0]
+    params_and_results["acc"] = train_metrics[1]
+    test_metrics = model.evaluate(x_test, vote_data["y_test"], batch_size=10000)
+    params_and_results["val_loss"] = test_metrics[0]
+    params_and_results["val_acc"] = test_metrics[1]
+    params_and_results = pd.Series(params_and_results)
+    print(params_and_results)
 
-with open(DATA_PATH + "train_history.pkl", 'wb') as file_pi:
-        pickle.dump(history.history, file_pi)
-history_dict = history.history
+    experimental_log_path = os.getcwd() + f'/experimental_log/{data_params["data_type"]}_model_metrics.csv'
 
-# fitted_model = load_model(DATA_PATH + "keras_result.h5", custom_objects={"cust_reg": cust_reg})
-model.load_weights(DATA_PATH + 'my_model_weights.h5')
-fitted_model = model
+    try:
+        exp_log = pd.read_csv(experimental_log_path, index_col=False)
+        exp_log = exp_log.append(params_and_results.to_frame().transpose())
+    except IOError:
+        exp_log = params_and_results.to_frame().transpose()
 
-with open(DATA_PATH + "train_history.pkl", 'rb') as file_pi:
-        history_dict = pickle.load(file_pi)
+    exp_log.to_csv(experimental_log_path, index=False)
 
-print(fitted_model.evaluate([vote_data["j"], vote_data["m"]] + vote_data["time_passed"], vote_data["y"], batch_size=10000))
-key_index = round(0.2 * vote_data["N"])
-print(fitted_model.evaluate([vote_data["j"][:(vote_data["N"] - key_index)],
-                             vote_data["m"][:(vote_data["N"] - key_index)]] + [i[:(vote_data["N"] - key_index)] for i in vote_data["time_passed"]],
-                             vote_data["y"][:(vote_data["N"] - key_index )], batch_size=10000))
-print(fitted_model.evaluate([vote_data["j"][-key_index:],
-                             vote_data["m"][-key_index:]] + [i[-key_index:] for i in vote_data["time_passed"]],
-                             vote_data["y"][-key_index:], batch_size=10000))
+    # model.save(DATA_PATH + "keras_result.h5")
+    fname_weights = '/models/{data_type}_model_weights_{congress_cutoff}_{k_dim}_{k_time}.h5'.format(**data_params)
+    model.save_weights(DATA_PATH + fname_weights)
+
+    fname_history = '/models/{data_type}_train_history_{congress_cutoff}_{k_dim}_{k_time}.pkl'.format(**data_params)
+    with open(DATA_PATH + fname_history, 'wb') as file_pi:
+            pickle.dump(history.history, file_pi)
+    history_dict = history.history
+
+    # fitted_model = load_model(DATA_PATH + "keras_result.h5", custom_objects={"cust_reg": cust_reg})
+    model.load_weights(DATA_PATH + fname_weights)
+    fitted_model = model
+
+    with open(DATA_PATH + "train_history.pkl", 'rb') as file_pi:
+            history_dict = pickle.load(file_pi)
 
 # %matplotlib inline
 # pd.DataFrame(fitted_model.layers[0].layers[0].get_weights()[0]).hist()
 # pd.DataFrame(fitted_model.predict([vote_data["j"], vote_data["m"]] + vote_data["time_passed"]))[0].hist()
-
 
 
 losses = pd.DataFrame({'epoch': [i + 1 for i in range(len(history_dict['loss']))],
