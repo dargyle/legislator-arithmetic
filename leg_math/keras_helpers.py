@@ -6,7 +6,7 @@ import pickle
 
 import warnings
 
-from keras.layers import Embedding, Reshape, Merge, Dropout, SpatialDropout1D, Dense, Flatten, Input, Dot, LSTM, Add, Subtract, Conv1D, MaxPooling1D, Concatenate, Multiply, BatchNormalization, Lambda, Activation
+from keras.layers import Embedding, Reshape, Merge, Dropout, SpatialDropout1D, Dense, Flatten, Input, Dot, LSTM, Add, Subtract, Conv1D, MaxPooling1D, Concatenate, Multiply, BatchNormalization, Lambda, Activation, InputSpec
 from keras.models import Sequential, Model
 from keras.initializers import TruncatedNormal
 from keras import regularizers
@@ -166,14 +166,17 @@ class OrthReg(Regularizer):
         regularization = 0.0
         mean_t = K.mean(xy_t, axis=self.axis, keepdims=True)
         dsize = K.int_shape(mean_t)[1]
-        cov_t = (K.transpose(xy_t-mean_t) @ (xy_t-mean_t)) / (dsize - 1)
-        cov2_t = K.tf.diag(1 / K.sqrt(K.tf.diag_part(cov_t)))
-        cor = cov2_t @ cov_t @ cov2_t
-        # Norm of the off diagonal elements
-        eye = K.eye(K.int_shape(cor)[0])
-        # Penalize by the off diagonal elements
-        norm = self.rf * K.sqrt(K.sum(K.square(cor - eye)) + K.epsilon())
-        # norm = K.print_tensor(norm, message="norm is: ")
+        if dsize > 1:
+            cov_t = (K.transpose(xy_t-mean_t) @ (xy_t-mean_t)) / (dsize - 1)
+            cov2_t = K.tf.diag(1 / K.sqrt(K.tf.diag_part(cov_t) + K.epsilon()))
+            cor = cov2_t @ cov_t @ cov2_t
+            # Norm of the off diagonal elements
+            eye = K.eye(K.int_shape(cor)[0])
+            # Penalize by the off diagonal elements
+            norm = self.rf * K.sqrt(K.sum(K.square(cor - eye)) + K.epsilon())
+            # norm = K.print_tensor(norm, message="norm is: ")
+        else:
+            norm = 0
         regularization += norm
 
         # QA help
@@ -192,6 +195,36 @@ class OrthReg(Regularizer):
     def get_config(self):
         return {'rf': float(self.rf)}
 
+
+class TimestepDropout(Dropout):
+    """Timestep Dropout.
+
+    This version performs the same function as Dropout, however it drops
+    entire timesteps (e.g., words embeddings in NLP tasks) instead of individual elements (features).
+
+    # Arguments
+        rate: float between 0 and 1. Fraction of the timesteps to drop.
+
+    # Input shape
+        3D tensor with shape:
+        `(samples, timesteps, channels)`
+
+    # Output shape
+        Same as input
+
+    # References
+        - https://github.com/keras-team/keras/issues/7290
+        - A Theoretically Grounded Application of Dropout in Recurrent Neural Networks (https://arxiv.org/pdf/1512.05287)
+    """
+
+    def __init__(self, rate, **kwargs):
+        super(TimestepDropout, self).__init__(rate, **kwargs)
+        self.input_spec = InputSpec(ndim=3)
+
+    def _get_noise_shape(self, inputs):
+        input_shape = K.shape(inputs)
+        noise_shape = (input_shape[0], input_shape[1], 1)
+        return noise_shape
 
 
 # class UnitSphere(Regularizer):
@@ -416,8 +449,8 @@ def normal_activation(x):
 get_custom_objects().update({'normal_activation': Activation(normal_activation)})
 
 
-def generate_time_layer(i, leg_input, time_input):
-    ideal_points_time = Embedding(input_dim=n_users, output_dim=k_dim, input_length=1, name="ideal_points_time_{}".format(i),
+def generate_time_layer(i, n_leg, k_dim, leg_input, time_input):
+    ideal_points_time = Embedding(input_dim=n_leg, output_dim=k_dim, input_length=1, name="ideal_points_time_{}".format(i),
                                   embeddings_initializer=TruncatedNormal(mean=0.0, stddev=0.05, seed=None),
                                   # weights=[init_leg_embedding_final.values]
                                   )(leg_input)
@@ -449,6 +482,7 @@ def MOAmodels(n_leg, n_votes,
     bill_input = Input(shape=(1, ), dtype="int32", name="bill_input")
     if bill_input_dropout > 0.0:
         bill_input_drop = Dropout(bill_input_dropout)(bill_input)
+        # bill_input_drop = TimestepDropout(bill_input_dropout)(bill_input)
     else:
         bill_input_drop = bill_input
     time_input_list = [generate_time_input(i) for i in range(1, k_time + 1)]
@@ -467,10 +501,10 @@ def MOAmodels(n_leg, n_votes,
                              weights=[init_leg_embedding.values],
                              )(leg_input_drop)
     if ideal_dropout > 0.0:
-        ideal_points = Dropout(ideal_dropout)(ideal_points)
+        ideal_points = TimestepDropout(ideal_dropout)(ideal_points)
     # ideal_points = BatchNormalization()(ideal_points)
     # ideal_points = Lambda(standardize, name="norm_ideal_points")(ideal_points)
-    time_layer_list = [generate_time_layer(i, leg_input_drop, time_input_list[i-1]) for i in range(1, k_time + 1)]
+    time_layer_list = [generate_time_layer(i, n_leg, k_dim, leg_input_drop, time_input_list[i-1]) for i in range(1, k_time + 1)]
 
     # flat_ideal_points = Reshape((k_dim,))(ideal_points)
     # flat_ideal_points_time = Reshape((k_dim,))(ideal_points_time)
@@ -490,7 +524,8 @@ def MOAmodels(n_leg, n_votes,
                           )(bill_input_drop)
 
     if yes_point_dropout > 0.0:
-        yes_point = Dropout(yes_point_dropout)(yes_point)
+        # yes_point = Dropout(yes_point_dropout, seed=65)(yes_point)
+        yes_point = TimestepDropout(yes_point_dropout, seed=65)(yes_point)
     flat_yes_point = Reshape((k_dim,))(yes_point)
 
     no_point = Embedding(input_dim=n_votes, output_dim=k_dim, input_length=1, name="no_point",
@@ -498,7 +533,8 @@ def MOAmodels(n_leg, n_votes,
                          # embeddings_initializer=TruncatedNormal(mean=0.0, stddev=0.3, seed=None),
                          )(bill_input_drop)
     if no_point_dropout > 0.0:
-        no_point = Dropout(no_point_dropout)(no_point)
+        # no_point = Dropout(no_point_dropout, seed=65)(no_point)
+        no_point = TimestepDropout(no_point_dropout, seed=65)(no_point)
     flat_no_point = Reshape((k_dim,))(no_point)
 
     # yes_term = WnomTerm(output_dim=1, trainable=True, name="yes_term")([flat_ideal_points, flat_yes_point])
@@ -511,10 +547,11 @@ def MOAmodels(n_leg, n_votes,
                              )([flat_ideal_points, flat_yes_point, flat_no_point])
 
     # combined = K.print_tensor(combined, message="combined is: ")
-    main_output = Dense(1, activation="normal_activation", name="main_output", use_bias=False, kernel_initializer=Constant(15))(combined)
+    main_output = Dense(1, activation="sigmoid", name="main_output", use_bias=False, kernel_initializer=Constant(15))(combined)
 
     model = Model(inputs=[leg_input, bill_input] + time_input_list, outputs=[main_output])
     return model
+
 
 if __name__ == '__main__':
     fsize=1
@@ -527,7 +564,7 @@ if __name__ == '__main__':
     y
     xy
 
-    xy_t = K.random_normal_variable(shape=(5, 2), mean=0, scale=1)
+    xy_t = K.random_normal_variable(shape=(5, 1), mean=0, scale=1)
     K.eval(xy_t)
 
     mean_t = K.mean(xy_t, axis=0, keepdims=True)
