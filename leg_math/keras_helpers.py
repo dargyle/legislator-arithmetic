@@ -471,7 +471,8 @@ def MOAmodels(n_leg, n_votes,
               init_leg_embedding=None,
               ideal_dropout=0.0,
               yes_point_dropout=0.0,
-              no_point_dropout=0.0
+              no_point_dropout=0.0,
+              dropout_type="timestep"
               ):
     leg_input = Input(shape=(1, ), dtype="int32", name="leg_input")
     if leg_input_dropout > 0.0:
@@ -524,8 +525,10 @@ def MOAmodels(n_leg, n_votes,
                           )(bill_input_drop)
 
     if yes_point_dropout > 0.0:
-        # yes_point = Dropout(yes_point_dropout, seed=65)(yes_point)
-        yes_point = TimestepDropout(yes_point_dropout, seed=65)(yes_point)
+        if dropout_type == "timestep":
+            yes_point = TimestepDropout(yes_point_dropout, seed=65)(yes_point)
+        else:
+            yes_point = Dropout(yes_point_dropout, seed=65)(yes_point)
     flat_yes_point = Reshape((k_dim,))(yes_point)
 
     no_point = Embedding(input_dim=n_votes, output_dim=k_dim, input_length=1, name="no_point",
@@ -533,8 +536,10 @@ def MOAmodels(n_leg, n_votes,
                          # embeddings_initializer=TruncatedNormal(mean=0.0, stddev=0.3, seed=None),
                          )(bill_input_drop)
     if no_point_dropout > 0.0:
-        # no_point = Dropout(no_point_dropout, seed=65)(no_point)
-        no_point = TimestepDropout(no_point_dropout, seed=65)(no_point)
+        if dropout_type == "timestep":
+            no_point = TimestepDropout(no_point_dropout, seed=65)(no_point)
+        else:
+            no_point = Dropout(no_point_dropout, seed=65)(no_point)            
     flat_no_point = Reshape((k_dim,))(no_point)
 
     # yes_term = WnomTerm(output_dim=1, trainable=True, name="yes_term")([flat_ideal_points, flat_yes_point])

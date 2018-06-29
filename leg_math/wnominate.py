@@ -38,8 +38,9 @@ def process_data(data_type="test", congress_cutoff=0, k_dim=1, k_time=0, return_
     if data_type == "cosponsor":
         # vote_df = pd.read_feather(DATA_PATH + "cosponsor/govtrack_cosponsor_data.feather")
         vote_df = pd.read_feather(DATA_PATH + "cosponsor/govtrack_cosponsor_data_smart_oppose.feather")
+        vote_df = vote_df.drop("icpsr_id", axis=1)
         sponsor_counts = vote_df.groupby("vote_id")["vote"].sum()
-        min_sponsors = 2
+        min_sponsors = 1
         multi_sponsored_bills = sponsor_counts[sponsor_counts >= min_sponsors]
         multi_sponsored_bills.name = "sponsor_counts"
         vote_df = pd.merge(vote_df, multi_sponsored_bills.to_frame(), left_on="vote_id", right_index=True)
@@ -131,12 +132,12 @@ def process_data(data_type="test", congress_cutoff=0, k_dim=1, k_time=0, return_
         return vote_data
 
 
-for i in range(1, 8):
+for i in range(1, 10):
     data_params = {
                    "data_type": "votes",
-                   "congress_cutoff": 0,
+                   "congress_cutoff": 93,
                    "k_dim": i,
-                   "k_time": 0,
+                   "k_time": 1,
                    }
 
     vote_data = process_data(**data_params, return_vote_df=False)
@@ -147,8 +148,9 @@ for i in range(1, 8):
                     "k_dim": data_params["k_dim"],
                     "k_time": data_params["k_time"],
                     "init_leg_embedding": vote_data["init_embedding"],
-                    "yes_point_dropout": 0.0,
-                    "no_point_dropout": 0.0,
+                    "yes_point_dropout": 0.2,
+                    "no_point_dropout": 0.2,
+                    "dropout_type": "normal",
                     }
 
     print("N Legislators: {}".format(vote_data["J"]))

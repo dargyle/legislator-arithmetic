@@ -15,7 +15,7 @@ thanks: "The code for this method is available at the author's github repository
 author:
 - name: Daniel Argyle
   affiliation: FiscalNote
-abstract: "This document provides an introduction to R Markdown, argues for its..."
+abstract: "See intro..."
 keywords: "ideal point estimation"
 date: "`r format(Sys.time(), '%B %d, %Y')`"
 geometry: margin=1in
@@ -30,17 +30,26 @@ fontsize: 11pt
 # Setup a python instance to use
 library(reticulate)
 ```
-wnom1
+
 ```{python, include=FALSE}
 answer = '42'
 ```
 
 # Introduction
 
-# Existing methods
-I come not to dismiss but to augment
+We propose a neural network implementation of ideal-point estimation that scales well to large datasets and allows incorporation of additional metadata. Neural networks are well-suited for these models, and the performance benefit, along with distributed computing capabilities, allows application of ideal point estimation to pooled datasets where computation was previously infeasible due to scale. We demonstrate the algorithm on two different datasets, the complete history of US Congressional roll call votes and modern cosponsorship networks, and compare the results against standard ideal point estimation techniques.
 
-[Insert the long illustrious history of ideal point estimation here]
+To evaluate algorithmic performance, we test the resulting estimates on both training and test data by holding out a subset of legislators’ votes. This allows us to compare the quality of different model parameterizations and choice of dimensions while still guarding against overfitting. Specifically, we directly compare the performance of different ideal point parameterizations such as DW-NOMINATE and the conventional Bayesian parameterization. 
+
+We demonstrate the algorithms in two ways. First, we jointly estimate ideal points over the pooled set of US Congressional roll call votes from 1789-2018.  Unidimensional ideal points from the neural network implementation are similar to the conventional DW-NOMINATE results.  However, cross validation scores indicate that the data are better explained with more than one dimension. Clustering the multidimensional ideal points yields intuitive temporal and ideological groupings and provides a more nuanced picture of ideological polarization. 
+
+Second, we take advantage of the fact that many more bills are sponsored than actually come to a vote and estimate an ideal point distribution over a large set of sponsorship and cosponsorship decisions in the 93rd-114th Congresses. Cosponsorship provides a different perspective on legislators’ beliefs, independent of strategic voting or administrative votes of little ideological salience. We treat cosponsorship as a clear endorsement of a bill’s content and assume that a choice not to cosponsor a bill can be interpreted as something less than full support. When compared to traditional ideal points, cosponsorship ideal points show somewhat different trends in polarization and result in a higher number of optimal dimensions.
+
+
+# Existing methods
+<!-- I come not to dismiss but to augment -->
+
+[This is polmeth, y'all know this already]
 
 # Technical Details
 
