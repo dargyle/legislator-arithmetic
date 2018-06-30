@@ -40,6 +40,14 @@ else:
 leg_party = leg_data[["leg_id", "party_code"]].drop_duplicates()
 leg_party[leg_party["leg_id"].duplicated(keep=False)].sort_values("leg_id")
 
+print("Get majority party")
+party_majority_rows = party_data.groupby(["congress", "chamber"])["n_members"].idxmax().values
+party_data["majority_party"] = party_data.index.isin(party_majority_rows)
+majority_parties = party_data.loc[party_data["majority_party"], ["congress", "chamber", "party_code"]]
+majority_parties = majority_parties.rename(columns={"party_code": "majority_party_code"})
+leg_data = pd.merge(leg_data, majority_parties, on=["congress", "chamber"])
+leg_data["in_majority"] = 1 * (leg_data["party_code"] == leg_data["majority_party_code"])
+
 print("Map the vote categories")
 
 yea_codes = [1, 2, 3]
@@ -87,7 +95,7 @@ while voter_condition or unanimity_condition:
 leg_data["init_value"] = 0
 leg_data.loc[leg_data["party_code"] == 100, "init_value"] = -1
 leg_data.loc[leg_data["party_code"] == 200, "init_value"] = 1
-vote_df = pd.merge(vote_df, leg_data[["leg_id", "init_value"]].drop_duplicates(), on="leg_id")
+vote_df = pd.merge(vote_df, leg_data[["leg_id", "init_value", "in_majority"]].drop_duplicates(), on="leg_id")
 
 vote_df.to_feather(DATA_PATH + "vote_df_cleaned.feather")
 

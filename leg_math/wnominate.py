@@ -32,7 +32,7 @@ from leg_math.keras_helpers import GetBest, MOAmodels
 DATA_PATH = os.path.expanduser("~/data/leg_math/")
 
 
-def process_data(data_type="test", congress_cutoff=0, k_dim=1, k_time=0, return_vote_df=False, validation_split=0.2):
+def process_data(data_type="test", congress_cutoff=0, k_dim=1, k_time=0, return_vote_df=False, validation_split=0.2, covariates_list=[]):
     if data_type == "votes":
         vote_df = pd.read_feather(DATA_PATH + "vote_df_cleaned.feather")
     if data_type == "cosponsor":
@@ -117,7 +117,10 @@ def process_data(data_type="test", congress_cutoff=0, k_dim=1, k_time=0, return_
                  'time_passed_test': [i[-key_index:] for i in time_passed],
                  'init_embedding': init_embedding,
                  'vote_crosswalk': vote_crosswalk,
-                 'leg_crosswalk': leg_crosswalk}
+                 'leg_crosswalk': leg_crosswalk,
+                 'covariates_train': vote_df_temp[covariates_list].values[:(N - key_index), :],
+                 'covariates_test': vote_df_temp[covariates_list].values[-key_index:, :],
+                 }
 
     init_leg_embedding_final = pd.DataFrame(np.random.uniform(-1.0, 1.0, size=(vote_data["J"], k_dim)))
     init_leg_embedding_final.iloc[:, 0] = init_leg_embedding_final.iloc[:, 0].abs() * vote_data["init_embedding"]["init_value"]
@@ -133,12 +136,13 @@ def process_data(data_type="test", congress_cutoff=0, k_dim=1, k_time=0, return_
 
 
 for i in range(1, 10):
-    data_params = {
-                   "data_type": "votes",
-                   "congress_cutoff": 93,
-                   "k_dim": i,
-                   "k_time": 1,
-                   }
+    data_params = dict(
+                   data_type="votes",
+                   congress_cutoff=93,
+                   k_dim=i,
+                   k_time=0,
+                   covariates_list=["in_majority"],
+                   )
 
     vote_data = process_data(**data_params, return_vote_df=False)
     # vote_data, vote_df = process_data(**data_params, return_vote_df=True)
@@ -151,6 +155,7 @@ for i in range(1, 10):
                     "yes_point_dropout": 0.2,
                     "no_point_dropout": 0.2,
                     "dropout_type": "normal",
+                    "covariates_list": data_params["covariates_list"],
                     }
 
     print("N Legislators: {}".format(vote_data["J"]))

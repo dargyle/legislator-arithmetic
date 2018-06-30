@@ -472,7 +472,8 @@ def MOAmodels(n_leg, n_votes,
               ideal_dropout=0.0,
               yes_point_dropout=0.0,
               no_point_dropout=0.0,
-              dropout_type="timestep"
+              dropout_type="timestep",
+              covariates_list=[],
               ):
     leg_input = Input(shape=(1, ), dtype="int32", name="leg_input")
     if leg_input_dropout > 0.0:
@@ -539,7 +540,7 @@ def MOAmodels(n_leg, n_votes,
         if dropout_type == "timestep":
             no_point = TimestepDropout(no_point_dropout, seed=65)(no_point)
         else:
-            no_point = Dropout(no_point_dropout, seed=65)(no_point)            
+            no_point = Dropout(no_point_dropout, seed=65)(no_point)
     flat_no_point = Reshape((k_dim,))(no_point)
 
     # yes_term = WnomTerm(output_dim=1, trainable=True, name="yes_term")([flat_ideal_points, flat_yes_point])
@@ -550,6 +551,10 @@ def MOAmodels(n_leg, n_votes,
     combined = JointWnomTerm(output_dim=1, trainable=True, name="wnom_term",
                              # kernel_constraint=SumToOne()
                              )([flat_ideal_points, flat_yes_point, flat_no_point])
+
+    if covariates_list:
+        covariates = Input(shape=(n_votes, len(covariates_list)), name="covariates")
+        combined = Concatenate()(combined, covariates)
 
     # combined = K.print_tensor(combined, message="combined is: ")
     main_output = Dense(1, activation="sigmoid", name="main_output", use_bias=False, kernel_initializer=Constant(15))(combined)
