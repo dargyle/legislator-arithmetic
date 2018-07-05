@@ -7,13 +7,16 @@ from scipy import stats
 DATA_PATH = os.path.expanduser("~/data/leg_math/")
 
 n_leg = 100
-n_bills = 1000
-k_dim = 3
+n_bills = 2000
+k_dim = 2
+
+include_covariates = True
+beta_covar = 0.1
 
 # w = np.repeat(0.5, k_dim)
-w = np.array([1.5, 0.5, 0.5])
+w = np.array([1.0, 0.5])
 # Impose sum to one
-w = w / w.sum()
+# w = w / w.sum()
 beta = 15.0
 
 cdf_type = "norm"
@@ -37,8 +40,9 @@ if k_dim > 1:
         ideal_points[f"coord{i}D"] = ideal_points[f"coord{i}D"] * np.random.choice([-1, 1], size=(n_leg, ))
 
 # Renorm samples to have max norm of 1
-max_norm = metric = np.sqrt((ideal_points.filter(regex="coord") ** 2).sum(axis=1)).max()
-ideal_points = ideal_points / max_norm
+max_norm = np.sqrt((ideal_points.filter(regex="coord") ** 2).sum(axis=1)).max()
+col_selector = ideal_points.columns.str.contains("coord")
+ideal_points.loc[:, col_selector] = ideal_points.loc[:, col_selector] / max_norm
 
 # Get random bill points
 bill_ids = "bill_" + pd.Series(np.arange(0, n_bills)).astype(str).str.zfill(len(str(n_bills)))
@@ -80,10 +84,20 @@ temp_term = np.exp(-0.5 * yes_term) - np.exp(-0.5 * no_term)
 # NOTE: Turns out that the assumption is on the difference of the error terms
 error = np.random.normal(0, np.sqrt(1 / beta), size=len(votes))
 
+votes["party_in_power"] = 100
+votes["congress"] = 114
+bill_numbers = votes.index.get_level_values(1).str.split("_").str.get(1).astype(int)
+votes.loc[bill_numbers > int(n_bills / 2), "party_in_power"] = 200
+votes.loc[bill_numbers > int(n_bills / 2), "congress"] = 115
+if include_covariates:
+    votes["in_majority"] = 1 * (votes["partyCode"] == votes["party_in_power"])
+else:
+    votes["in_majority"] = 0
+
 if cdf_type == "norm":
-    vote_prob = stats.norm.cdf(beta * temp_term + error)
+    vote_prob = stats.norm.cdf(beta * temp_term + error + beta_covar * votes["in_majority"])
 elif cdf_type == "logit":
-    vote_prob = stats.logistic.cdf(beta * temp_term + error)
+    vote_prob = stats.logistic.cdf(beta * temp_term + error + beta_covar * votes["in_majority"])
 
 votes["vote_prob"] = vote_prob
 votes["vote"] = 1 * (votes["vote_prob"] > 0.5)
@@ -92,5 +106,6 @@ votes["vote"] = 1 * (votes["vote_prob"] > 0.5)
 roll_call = votes["vote"].map({1: 1, 0: 6}).unstack()
 
 # Export for use in other esimation
-roll_call.to_csv(DATA_PATH + "/test_votes.csv")
+votes.reset_index().to_feather(DATA_PATH + "/test_votes_df.feather")
+# roll_call.to_csv(DATA_PATH + "/test_votes.csv")
 ideal_points.to_csv(DATA_PATH + "/test_legislators.csv")

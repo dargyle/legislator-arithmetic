@@ -193,7 +193,8 @@ class OrthReg(Regularizer):
         return regularization
 
     def get_config(self):
-        return {'rf': float(self.rf)}
+        return {'rf': float(self.rf),
+                'axis': self.axis}
 
 
 class TimestepDropout(Dropout):
@@ -372,9 +373,10 @@ class JointWnomTerm(Layer):
     # TODO: Add unit norm constraint
     # IDEA: What happens if I allow the weights to be bill specific (probably not a good idea)
 
-    def __init__(self, output_dim, kernel_constraint=None, **kwargs):
+    def __init__(self, output_dim, kernel_constraint=None, kernel_regularizer=None, **kwargs):
         self.output_dim = output_dim
         self.kernel_constraint = constraints.get(kernel_constraint)
+        self.kernel_regularizer = constraints.get(kernel_regularizer)
         super(JointWnomTerm, self).__init__(**kwargs)
 
     def build(self, input_shape):
@@ -383,6 +385,7 @@ class JointWnomTerm(Layer):
                                       shape=(1, input_shape[0][1]),
                                       initializer=Constant(0.5),  # match original
                                       constraint=self.kernel_constraint,
+                                      regularizer=self.kernel_regularizer,
                                       trainable=True)
         super(JointWnomTerm, self).build(input_shape)  # Be sure to call this at the end
 
@@ -412,7 +415,7 @@ class JointWnomTerm(Layer):
                 # 'use_bias': self.use_bias,
                 # 'kernel_initializer': initializers.serialize(self.kernel_initializer),
                 # 'bias_initializer': initializers.serialize(self.bias_initializer),
-                # 'kernel_regularizer': regularizers.serialize(self.kernel_regularizer),
+                'kernel_regularizer': regularizers.serialize(self.kernel_regularizer),
                 # 'bias_regularizer': regularizers.serialize(self.bias_regularizer),
                 # 'activity_regularizer': regularizers.serialize(self.activity_regularizer),
                 'kernel_constraint': constraints.serialize(self.kernel_constraint),
@@ -472,6 +475,7 @@ def MOAmodels(n_leg, n_votes,
               ideal_dropout=0.0,
               yes_point_dropout=0.0,
               no_point_dropout=0.0,
+              combined_dropout=0.0,
               dropout_type="timestep",
               covariates_list=[],
               ):
@@ -549,17 +553,30 @@ def MOAmodels(n_leg, n_votes,
     # combined = Subtract()([yes_term, no_term])
 
     combined = JointWnomTerm(output_dim=1, trainable=True, name="wnom_term",
-                             # kernel_constraint=SumToOne()
+                             # kernel_constraint=SumToOne(),
+                             # kernel_regularizer=regularizers.l2(1e-2),
                              )([flat_ideal_points, flat_yes_point, flat_no_point])
+    if combined_dropout > 0:
+        combined = Dropout(combined_dropout)(combined)
 
     if covariates_list:
-        covariates = Input(shape=(n_votes, len(covariates_list)), name="covariates")
-        combined = Concatenate()(combined, covariates)
+        print(covariates_list)
+        covariates = Input(shape=(len(covariates_list), ), name="covariates")
+        combined = Concatenate()([combined, covariates])
 
     # combined = K.print_tensor(combined, message="combined is: ")
-    main_output = Dense(1, activation="sigmoid", name="main_output", use_bias=False, kernel_initializer=Constant(15))(combined)
+    main_output = Dense(1, activation="sigmoid", name="main_output", use_bias=False, kernel_initializer=Constant(1))(combined)
 
-    model = Model(inputs=[leg_input, bill_input] + time_input_list, outputs=[main_output])
+    if covariates_list:
+        if k_time > 0:
+            model = Model(inputs=[leg_input, bill_input] + [time_input_list] + [covariates], outputs=[main_output])
+        else:
+            model = Model(inputs=[leg_input, bill_input] + [covariates], outputs=[main_output])
+    else:
+        if k_time > 0:
+            model = Model(inputs=[leg_input, bill_input] + [time_input_list], outputs=[main_output])
+        else:
+            model = Model(inputs=[leg_input, bill_input], outputs=[main_output])
     return model
 
 
