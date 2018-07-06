@@ -1,0 +1,320 @@
+\documentclass[11pt,]{article}
+\usepackage[left=1in,top=1in,right=1in,bottom=1in]{geometry}
+\newcommand*{\authorfont}{\fontfamily{phv}\selectfont}
+\usepackage[]{mathpazo}
+
+
+  \usepackage[T1]{fontenc}
+  \usepackage[utf8]{inputenc}
+
+
+
+\usepackage{abstract}
+\renewcommand{\abstractname}{}    % clear the title
+\renewcommand{\absnamepos}{empty} % originally center
+
+\renewenvironment{abstract}
+ {{%
+    \setlength{\leftmargin}{0mm}
+    \setlength{\rightmargin}{\leftmargin}%
+  }%
+  \relax}
+ {\endlist}
+
+\makeatletter
+\def\@maketitle{%
+  \newpage
+%  \null
+%  \vskip 2em%
+%  \begin{center}%
+  \let \footnote \thanks
+    {\fontsize{18}{20}\selectfont\raggedright  \setlength{\parindent}{0pt} \@title \par}%
+}
+%\fi
+\makeatother
+
+
+
+
+\setcounter{secnumdepth}{0}
+
+\usepackage{color}
+\usepackage{fancyvrb}
+\newcommand{\VerbBar}{|}
+\newcommand{\VERB}{\Verb[commandchars=\\\{\}]}
+\DefineVerbatimEnvironment{Highlighting}{Verbatim}{commandchars=\\\{\}}
+% Add ',fontsize=\small' for more characters per line
+\usepackage{framed}
+\definecolor{shadecolor}{RGB}{248,248,248}
+\newenvironment{Shaded}{\begin{snugshade}}{\end{snugshade}}
+\newcommand{\KeywordTok}[1]{\textcolor[rgb]{0.13,0.29,0.53}{\textbf{#1}}}
+\newcommand{\DataTypeTok}[1]{\textcolor[rgb]{0.13,0.29,0.53}{#1}}
+\newcommand{\DecValTok}[1]{\textcolor[rgb]{0.00,0.00,0.81}{#1}}
+\newcommand{\BaseNTok}[1]{\textcolor[rgb]{0.00,0.00,0.81}{#1}}
+\newcommand{\FloatTok}[1]{\textcolor[rgb]{0.00,0.00,0.81}{#1}}
+\newcommand{\ConstantTok}[1]{\textcolor[rgb]{0.00,0.00,0.00}{#1}}
+\newcommand{\CharTok}[1]{\textcolor[rgb]{0.31,0.60,0.02}{#1}}
+\newcommand{\SpecialCharTok}[1]{\textcolor[rgb]{0.00,0.00,0.00}{#1}}
+\newcommand{\StringTok}[1]{\textcolor[rgb]{0.31,0.60,0.02}{#1}}
+\newcommand{\VerbatimStringTok}[1]{\textcolor[rgb]{0.31,0.60,0.02}{#1}}
+\newcommand{\SpecialStringTok}[1]{\textcolor[rgb]{0.31,0.60,0.02}{#1}}
+\newcommand{\ImportTok}[1]{#1}
+\newcommand{\CommentTok}[1]{\textcolor[rgb]{0.56,0.35,0.01}{\textit{#1}}}
+\newcommand{\DocumentationTok}[1]{\textcolor[rgb]{0.56,0.35,0.01}{\textbf{\textit{#1}}}}
+\newcommand{\AnnotationTok}[1]{\textcolor[rgb]{0.56,0.35,0.01}{\textbf{\textit{#1}}}}
+\newcommand{\CommentVarTok}[1]{\textcolor[rgb]{0.56,0.35,0.01}{\textbf{\textit{#1}}}}
+\newcommand{\OtherTok}[1]{\textcolor[rgb]{0.56,0.35,0.01}{#1}}
+\newcommand{\FunctionTok}[1]{\textcolor[rgb]{0.00,0.00,0.00}{#1}}
+\newcommand{\VariableTok}[1]{\textcolor[rgb]{0.00,0.00,0.00}{#1}}
+\newcommand{\ControlFlowTok}[1]{\textcolor[rgb]{0.13,0.29,0.53}{\textbf{#1}}}
+\newcommand{\OperatorTok}[1]{\textcolor[rgb]{0.81,0.36,0.00}{\textbf{#1}}}
+\newcommand{\BuiltInTok}[1]{#1}
+\newcommand{\ExtensionTok}[1]{#1}
+\newcommand{\PreprocessorTok}[1]{\textcolor[rgb]{0.56,0.35,0.01}{\textit{#1}}}
+\newcommand{\AttributeTok}[1]{\textcolor[rgb]{0.77,0.63,0.00}{#1}}
+\newcommand{\RegionMarkerTok}[1]{#1}
+\newcommand{\InformationTok}[1]{\textcolor[rgb]{0.56,0.35,0.01}{\textbf{\textit{#1}}}}
+\newcommand{\WarningTok}[1]{\textcolor[rgb]{0.56,0.35,0.01}{\textbf{\textit{#1}}}}
+\newcommand{\AlertTok}[1]{\textcolor[rgb]{0.94,0.16,0.16}{#1}}
+\newcommand{\ErrorTok}[1]{\textcolor[rgb]{0.64,0.00,0.00}{\textbf{#1}}}
+\newcommand{\NormalTok}[1]{#1}
+
+
+\title{Legislator Arithmetic \thanks{The code for this method is available at the author's github repository.}  }
+
+
+
+\author{\Large Daniel Argyle\vspace{0.05in} \newline\normalsize\emph{FiscalNote}  }
+
+
+\date{}
+
+\usepackage{titlesec}
+
+\titleformat*{\section}{\normalsize\bfseries}
+\titleformat*{\subsection}{\normalsize\itshape}
+\titleformat*{\subsubsection}{\normalsize\itshape}
+\titleformat*{\paragraph}{\normalsize\itshape}
+\titleformat*{\subparagraph}{\normalsize\itshape}
+
+
+\usepackage{natbib}
+\bibliographystyle{plainnat}
+\usepackage[strings]{underscore} % protect underscores in most circumstances
+
+
+
+\newtheorem{hypothesis}{Hypothesis}
+\usepackage{setspace}
+
+\makeatletter
+\@ifpackageloaded{hyperref}{}{%
+\ifxetex
+  \PassOptionsToPackage{hyphens}{url}\usepackage[setpagesize=false, % page size defined by xetex
+              unicode=false, % unicode breaks when used with xetex
+              xetex]{hyperref}
+\else
+  \PassOptionsToPackage{hyphens}{url}\usepackage[unicode=true]{hyperref}
+\fi
+}
+
+\@ifpackageloaded{color}{
+    \PassOptionsToPackage{usenames,dvipsnames}{color}
+}{%
+    \usepackage[usenames,dvipsnames]{color}
+}
+\makeatother
+\hypersetup{breaklinks=true,
+            bookmarks=true,
+            pdfauthor={Daniel Argyle (FiscalNote)},
+             pdfkeywords = {ideal point estimation},  
+            pdftitle={Legislator Arithmetic},
+            colorlinks=true,
+            citecolor=blue,
+            urlcolor=blue,
+            linkcolor=magenta,
+            pdfborder={0 0 0}}
+\urlstyle{same}  % don't use monospace font for urls
+
+% set default figure placement to htbp
+\makeatletter
+\def\fps@figure{htbp}
+\makeatother
+
+
+
+% add tightlist ----------
+\providecommand{\tightlist}{%
+\setlength{\itemsep}{0pt}\setlength{\parskip}{0pt}}
+
+\begin{document}
+	
+% \pagenumbering{arabic}% resets `page` counter to 1 
+%
+% \maketitle
+
+{% \usefont{T1}{pnc}{m}{n}
+\setlength{\parindent}{0pt}
+\thispagestyle{plain}
+{\fontsize{18}{20}\selectfont\raggedright 
+\maketitle  % title \par  
+
+}
+
+{
+   \vskip 13.5pt\relax \normalsize\fontsize{11}{12} 
+\textbf{\authorfont Daniel Argyle} \hskip 15pt \emph{\small FiscalNote}   
+
+}
+
+}
+
+
+
+
+
+
+
+
+\begin{abstract}
+
+    \hbox{\vrule height .2pt width 39.14pc}
+
+    \vskip 8.5pt % \small 
+
+\noindent See intro\ldots{}
+
+
+\vskip 8.5pt \noindent \emph{Keywords}: ideal point estimation \par
+
+    \hbox{\vrule height .2pt width 39.14pc}
+
+
+
+\end{abstract}
+
+
+\vskip 6.5pt
+
+
+\noindent  \section{Introduction}\label{introduction}
+
+We propose a neural network implementation of ideal-point estimation
+that scales well to large datasets and allows incorporation of
+additional metadata. Neural networks are well-suited for these models,
+and the performance benefit, along with distributed computing
+capabilities, allows application of ideal point estimation to pooled
+datasets where computation was previously infeasible due to scale. We
+demonstrate the algorithm on two different datasets, the complete
+history of US Congressional roll call votes and modern cosponsorship
+networks, and compare the results against standard ideal point
+estimation techniques.
+
+To evaluate algorithmic performance, we test the resulting estimates on
+both training and test data by holding out a subset of legislators'
+votes. This allows us to compare the quality of different model
+parameterizations and choice of dimensions while still guarding against
+overfitting. Specifically, we directly compare the performance of
+different ideal point parameterizations such as DW-NOMINATE and the
+conventional Bayesian parameterization.
+
+We demonstrate the algorithms in two ways. First, we jointly estimate
+ideal points over the pooled set of US Congressional roll call votes
+from 1789-2018. Unidimensional ideal points from the neural network
+implementation are similar to the conventional DW-NOMINATE results.
+However, cross validation scores indicate that the data are better
+explained with more than one dimension. Clustering the multidimensional
+ideal points yields intuitive temporal and ideological groupings and
+provides a more nuanced picture of ideological polarization.
+
+Second, we take advantage of the fact that many more bills are sponsored
+than actually come to a vote and estimate an ideal point distribution
+over a large set of sponsorship and cosponsorship decisions in the
+93rd-114th Congresses. Cosponsorship provides a different perspective on
+legislators' beliefs, independent of strategic voting or administrative
+votes of little ideological salience. We treat cosponsorship as a clear
+endorsement of a bill's content and assume that a choice not to
+cosponsor a bill can be interpreted as something less than full support.
+When compared to traditional ideal points, cosponsorship ideal points
+show somewhat different trends in polarization and result in a higher
+number of optimal dimensions.
+
+\section{Existing methods}\label{existing-methods}
+
+{[}This is polmeth, y'all know this already{]}
+
+This work is inspired by two, highly similar, lines of research in
+political science and computer science. Speaking generally\footnote{A
+  complete review of the literature in either field is beyond the scope
+  of this work.{]}} , political scientists--from the days of (really old
+cite), through Poole and Rosenthal, and up to and including modern
+contributions such as (modern cites)--have focused primarily on ideal
+point estimation as a means to study the ideology space implied by the
+ideal points themselves. That these methods also predict votes is
+somewhat of an afterthought. On the other hand, computer science
+implementations largely focus on predicting legislator votes, without
+concern regarding the ideal points themselves.
+
+\section{Technical Details}\label{technical-details}
+
+\section{Results}\label{results}
+
+\subsection{My method and WNOMINATE packages are
+similar}\label{my-method-and-wnominate-packages-are-similar}
+
+\subsection{Let's do some things that weren't really feasible
+before}\label{lets-do-some-things-that-werent-really-feasible-before}
+
+\begin{enumerate}
+\def\labelenumi{\arabic{enumi}.}
+\tightlist
+\item
+  I implemented DW-NOMINATE as a neural network
+
+  \begin{itemize}
+  \tightlist
+  \item
+    Why? Because I could! But also because it's a nice platform for this
+    kind of optimization.
+  \item
+    It scales much better than existing implementations
+  \item
+    It's extensible in very interesting ways
+  \end{itemize}
+\item
+  All ideal point models are (a bit) overfit.
+
+  \begin{itemize}
+  \tightlist
+  \item
+    At some point the algorithm starts to make marginal improvements to
+    the parameters that don't improve out of sample performance
+  \item
+    Out of sample performance matters much more than in sample (e.g.~if
+    we only cared about in sample we'd just add dimensions until we cam
+    predict it perfectly)
+  \item
+    Out of sample performance is a useful metric for evaluating modeling
+    choices (adding another dimension, adding a time component, adding
+    an external variable)
+  \end{itemize}
+\end{enumerate}
+
+this is inline 42 and
+
+\begin{Shaded}
+\begin{Highlighting}[]
+\NormalTok{py}\OperatorTok{$}\NormalTok{answer}
+\end{Highlighting}
+\end{Shaded}
+
+\begin{verbatim}
+## [1] "42"
+\end{verbatim}
+
+
+
+
+\newpage
+\singlespacing 
+\end{document}
