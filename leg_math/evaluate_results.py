@@ -4,18 +4,18 @@ import pandas as pd
 
 import pickle
 
-from leg_math.keras_helpers import MOAmodels
+from leg_math.keras_helpers import NNnominate
 from leg_math.data_processing import process_data
 
 DATA_PATH = os.path.expanduser("~/data/leg_math/")
 
-i = 4
+i = 2
 data_params = dict(
                data_type="votes",
-               congress_cutoff=93,
+               congress_cutoff=114,
                k_dim=i,
                k_time=0,
-               covariates_list=["in_majority"],
+               covariates_list=[],
                )
 # vote_data = process_data(**data_params, return_vote_df=False)
 vote_data, vote_df = process_data(**data_params, return_vote_df=True)
@@ -28,11 +28,11 @@ model_params = {
                 "yes_point_dropout": 0.0,
                 "no_point_dropout": 0.0,
                 "combined_dropout": 0.5,
-                "dropout_type": "normal",
+                "dropout_type": "timestep",
                 "covariates_list": data_params["covariates_list"],
                 }
 
-model = MOAmodels(**model_params)
+model = NNnominate(**model_params)
 
 # from keras.models import load_model
 # from leg_math.keras_helpers import JointWnomTerm, TimestepDropout, OrthReg
@@ -53,12 +53,20 @@ fitted_model = model
 with open(DATA_PATH + fname_history, 'rb') as file_pi:
     history_dict = pickle.load(file_pi)
 
-if data_params["k_time"] > 0:
-    x_train = [vote_data["j_train"], vote_data["m_train"]] + [vote_data["time_passed_train"]] + [vote_data["covariates_train"]]
-    x_test = [vote_data["j_test"], vote_data["m_test"]] + [vote_data["time_passed_test"]] + [vote_data["covariates_test"]]
-if data_params["k_time"] == 0:
-    x_train = [vote_data["j_train"], vote_data["m_train"]] + [vote_data["covariates_train"]]
-    x_test = [vote_data["j_test"], vote_data["m_test"]] + [vote_data["covariates_test"]]
+if data_params["covariates_list"]:
+    if data_params["k_time"] > 0:
+        x_train = [vote_data["j_train"], vote_data["m_train"]] + [vote_data["time_passed_train"]] + [vote_data["covariates_train"]]
+        x_test = [vote_data["j_test"], vote_data["m_test"]] + [vote_data["time_passed_test"]] + [vote_data["covariates_test"]]
+    else:
+        x_train = [vote_data["j_train"], vote_data["m_train"]] + [vote_data["covariates_train"]]
+        x_test = [vote_data["j_test"], vote_data["m_test"]] + [vote_data["covariates_test"]]
+else:
+    if data_params["k_time"] > 0:
+        x_train = [vote_data["j_train"], vote_data["m_train"]] + [vote_data["time_passed_train"]]
+        x_test = [vote_data["j_test"], vote_data["m_test"]] + [vote_data["time_passed_test"]]
+    else:
+        x_train = [vote_data["j_train"], vote_data["m_train"]]
+        x_test = [vote_data["j_test"], vote_data["m_test"]]
 
 train_metrics = model.evaluate(x_train, vote_data["y_train"], batch_size=10000)
 train_metrics

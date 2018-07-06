@@ -51,7 +51,23 @@ Second, we take advantage of the fact that many more bills are sponsored than ac
 
 [This is polmeth, y'all know this already]
 
+This work is inspired by two, highly similar, lines of research in political science and computer science. Speaking generally[^1] , political scientists--from the days of (really old cite), through Poole and Rosenthal, and up to and including modern contributions such as (modern cites)--have focused primarily on ideal point estimation as a means to study the ideology space implied by the ideal points themselves. That these methods also predict votes is somewhat of an afterthought. On the other hand, computer science implementations largely focus on predicting legislator votes, without concern regarding the ideal points themselves.
+
+[^1]: A complete review of the literature in either field is beyond the scope of this work.]
+
+Combining the insights of these two fields, we wish to have the most predictive power without overfitting. We can then interpret the most predictive ideal points for insights.
+
+We suggest that 1. the model that predicts the best *on a held out sample of votes* provides the most insight into ideal points and 2. that there is a clear tradeoff between explanatory power and ease of interpretation of ideal point models that should be expliit.[^2] We implement ideal point models in a neural network framework because it's easily extensible and transparent.  Our results suggest that the two dimensional model relied on sacrifices explanatory power in voting decisions.
+
+[^2]: We will provide evidence that the optimal number of dimesnions for ideal point estimation is larger than most common one or two. It is perfectly reasonable to choose to rely on two dimensions, but the tradeoffs of that choice should be clear.
+
 # Technical Details
+
+We rely on several simple techniques from machine learning
+1. Out of sample testing
+2. Dropout regularization
+
+Dropout in two places: 1. Each dimension to ensure fitting even if first dimensions dominates. 2. On bill embeddings (to not overfit to a specific bill). Why not on legislators? The structure of the dynamic part of the model doesn't allow this easily.
 
 # Results
 

@@ -9,20 +9,20 @@ from keras.utils.vis_utils import model_to_dot
 
 from keras.callbacks import EarlyStopping, TerminateOnNaN
 
-from leg_math.keras_helpers import GetBest, MOAmodels
+from leg_math.keras_helpers import GetBest, NNnominate
 from leg_math.data_processing import process_data
 
 # Data processing
 DATA_PATH = os.path.expanduser("~/data/leg_math/")
 
-
-for i in range(1, 4):
+i=1
+for i in range(1, 9):
     data_params = dict(
-                   data_type="test",
+                   data_type="votes",
                    congress_cutoff=93,
                    k_dim=i,
-                   k_time=0,
-                   covariates_list=[],
+                   k_time=1,
+                   covariates_list=["in_majority"],
                    )
 
     vote_data = process_data(**data_params, return_vote_df=False)
@@ -33,8 +33,8 @@ for i in range(1, 4):
                     "k_dim": data_params["k_dim"],
                     "k_time": data_params["k_time"],
                     "init_leg_embedding": vote_data["init_embedding"],
-                    "yes_point_dropout": 0.2,
-                    "no_point_dropout": 0.2,
+                    "yes_point_dropout": 0.0,
+                    "no_point_dropout": 0.0,
                     "combined_dropout": 0.5,
                     "dropout_type": "timestep",
                     "covariates_list": data_params["covariates_list"],
@@ -47,7 +47,7 @@ for i in range(1, 4):
     print("Let's do a keras cf example")
     print(vote_data["y_train"].mean())
 
-    model = MOAmodels(**model_params)
+    model = NNnominate(**model_params)
 
     model.summary()
 
@@ -63,15 +63,15 @@ for i in range(1, 4):
                  TerminateOnNaN()]
     if data_params["covariates_list"]:
         if data_params["k_time"] > 0:
-            x_train = [vote_data["j_train"], vote_data["m_train"]] + [vote_data["time_passed_train"]] + [vote_data["covariates_train"]]
-            x_test = [vote_data["j_test"], vote_data["m_test"]] + [vote_data["time_passed_test"]] + [vote_data["covariates_test"]]
+            x_train = [vote_data["j_train"], vote_data["m_train"]] + vote_data["time_passed_train"] + [vote_data["covariates_train"]]
+            x_test = [vote_data["j_test"], vote_data["m_test"]] + vote_data["time_passed_test"]+ [vote_data["covariates_test"]]
         else:
             x_train = [vote_data["j_train"], vote_data["m_train"]] + [vote_data["covariates_train"]]
             x_test = [vote_data["j_test"], vote_data["m_test"]] + [vote_data["covariates_test"]]
     else:
         if data_params["k_time"] > 0:
-            x_train = [vote_data["j_train"], vote_data["m_train"]] + [vote_data["time_passed_train"]]
-            x_test = [vote_data["j_test"], vote_data["m_test"]] + [vote_data["time_passed_test"]]
+            x_train = [vote_data["j_train"], vote_data["m_train"]] + vote_data["time_passed_train"]
+            x_test = [vote_data["j_test"], vote_data["m_test"]] + vote_data["time_passed_test"]
         else:
             x_train = [vote_data["j_train"], vote_data["m_train"]]
             x_test = [vote_data["j_test"], vote_data["m_test"]]

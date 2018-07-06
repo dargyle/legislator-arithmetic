@@ -27,14 +27,6 @@ from keras.utils.vis_utils import model_to_dot
 from keras import backend as K
 
 
-# from tensorflow.python import debug as tf_debug
-# sess = K.get_session()
-# sess = tf_debug.LocalCLIDebugWrapperSession(sess)
-# # sess.add_tensor_filter("has_inf_or_nan", tf_debug.has_inf_or_nan)
-# # run -f has_inf_or_nan
-# K.set_session(sess)
-
-
 class GetBest(Callback):
     """Get the best model at the end of training.
     https://github.com/keras-team/keras/issues/2768
@@ -94,7 +86,7 @@ class GetBest(Callback):
         self.epochs_since_last_save += 1
         if self.epochs_since_last_save >= self.period:
             self.epochs_since_last_save = 0
-            #filepath = self.filepath.format(epoch=epoch + 1, **logs)
+            # filepath = self.filepath.format(epoch=epoch + 1, **logs)
             current = logs.get(self.monitor)
             if current is None:
                 warnings.warn('Can pick best model only with %s available, '
@@ -119,34 +111,6 @@ class GetBest(Callback):
             print('Using epoch %05d with %s: %0.5f' % (self.best_epochs, self.monitor,
                                                        self.best))
         self.model.set_weights(self.best_weights)
-
-
-# class OrthReg(Regularizer):
-#     """Orthogonality regularizers
-#
-#     # Arguments
-#         rf: Float; rf regularization factor.
-#     """
-#     # https://stackoverflow.com/questions/42911671/how-can-i-add-orthogonality-regularization-in-keras
-#     # m = K.dot(K.transpose(w), w) - K.eye(w[1].shape[0])
-#
-#     def __init__(self, rf=1.0):
-#         self.rf = K.cast_to_floatx(rf)
-#
-#     def __call__(self, x):
-#         regularization = 0.0
-#         m = K.dot(K.transpose(x), x)
-#         # n = m - K.eye(K.int_shape(m)[0])
-#         n = m - K.eye(K.int_shape(m)[0]) * K.tf.diag(m)
-#         # norm = K.sqrt(self.rf * K.sum(K.square(K.abs(n))))
-#         # Norm of the off diagonal elements
-#         norm = self.rf * K.sqrt(K.sum(K.square(n)) + K.epsilon())
-#         # norm = K.print_tensor(norm, message="norm is: ")
-#         regularization += norm
-#         return regularization
-#
-#     def get_config(self):
-#         return {'rf': float(self.rf)}
 
 
 class OrthReg(Regularizer):
@@ -228,35 +192,6 @@ class TimestepDropout(Dropout):
         return noise_shape
 
 
-# class UnitSphere(Regularizer):
-#     """Orthogonality regularizers
-#
-#     # Arguments
-#         rf: Float; rf regularization factor.
-#     """
-#     # https://stackoverflow.com/questions/42911671/how-can-i-add-orthogonality-regularization-in-keras
-#     # m = K.dot(K.transpose(w), w) - K.eye(w[1].shape[0])
-#
-#     def __init__(self, rf=1.0):
-#         self.rf = K.cast_to_floatx(rf)
-#
-#     def __call__(self, x):
-#         regularization = 0.0
-#         # Sum the square of the individual's ideal points, then subtract 1
-#         temp_sum = K.sum(K.square(x), axis=0)
-#         # relu sets negative to zero
-#         # https://stackoverflow.com/questions/41043894/setting-all-negative-values-of-a-tensor-to-zero-in-tensorflow
-#         # reg_term = K.sqrt(self.rf * K.sum(K.relu(temp_sum)))
-#         reg_term = K.cast(temp_sum > 0.0, temp_sum.dtype) * temp_sum
-#         reg_term_sum = K.sqrt(self.rf * K.sum(reg_term))
-#         # if np.isfinite(reg_term):
-#         regularization += reg_term_sum
-#         print(regularization)
-#         return regularization
-#
-#     def get_config(self):
-#         return {'rf': float(self.rf)}
-
 
 class UnitMetric(Constraint):
     """UnitMetric weight constraint.
@@ -292,14 +227,13 @@ class UnitMetric(Constraint):
         w /= (max_norm + K.epsilon())
         return w
 
-
     def get_config(self):
         return {'max_value': self.max_value,
                 'axis': self.axis}
 
 
 class UnitSphere(Constraint):
-    """Orthogonality constraint
+    """Constrain to unit hypersphere
 
     # Arguments
         rf: Float; rf regularization factor.
@@ -320,53 +254,6 @@ class SumToOne(Constraint):
         # Renormalize
         w /= K.sum(w, axis=-1, keepdims=True)
         return w
-
-
-def euc_dist_keras(x, y):
-    # return K.sqrt(K.sum(K.square(x - y), axis=-1, keepdims=True))
-    return K.sqrt(K.maximum(K.sum(K.square(x - y), axis=-1, keepdims=True), K.epsilon()))
-
-
-def wnom_term(tlist):
-    w = tlist[0]
-    x = tlist[1]
-    z = tlist[2]
-    temp_sum = K.dot(K.square(w), K.square(x - z))
-    distances = K.sqrt(K.sum(temp_sum, axis=1, keepdims=True))
-    return -0.5 * K.exp(distances)
-
-
-class WnomTerm(Layer):
-
-    def __init__(self, output_dim, **kwargs):
-        self.output_dim = output_dim
-        super(WnomTerm, self).__init__(**kwargs)
-
-    def build(self, input_shape):
-        # Create a trainable weight variable for this layer.
-        self.kernel = self.add_weight(name='kernel',
-                                      shape=(1, input_shape[0][1]),
-                                      initializer=Constant(0.5),  # match original
-                                      trainable=True)
-        super(WnomTerm, self).build(input_shape)  # Be sure to call this at the end
-
-    def call(self, tlist):
-        x = tlist[0]
-        z = tlist[1]
-        # https://stackoverflow.com/questions/47289116/element-wise-multiplication-with-broadcasting-in-keras-custom-layer
-        # x = K.print_tensor(x, message="x is: ")
-        # z = K.print_tensor(z, message="z is: ")
-        self.kernel = K.print_tensor(self.kernel, message="weights are: ")
-        temp_sum = K.tf.multiply(K.square(x - z), K.square(self.kernel))
-        temp_sum = K.print_tensor(temp_sum, message="temp_sum is: ")
-        distances = K.sqrt(K.sum(temp_sum, axis=1, keepdims=True))
-        distances = K.print_tensor(distances, message="distances is: ")
-        result = K.exp(-0.5 * distances)
-        result = K.print_tensor(result, message="distances is: ")
-        return result
-
-    def compute_output_shape(self, input_shape):
-            return (input_shape[0][0], self.output_dim)
 
 
 class JointWnomTerm(Layer):
@@ -429,27 +316,18 @@ class JointWnomTerm(Layer):
 
 
 def standardize(x):
+    """Standardize a tensor to standard normal
+    """
     x -= K.mean(x, axis=1, keepdims=True)
     x /= K.std(x, axis=1)
     return x
 
 
-def f(input_shape):
-    return input_shape
-
-
 def generate_time_input(i):
+    """Initialize a time input layer
+    """
     time_input = Input(shape=(1, ), name="time_input_{}".format(i))
     return time_input
-
-
-def normal_activation(x):
-    dist = K.tf.distributions.Normal(loc=0.0, scale=1.0)
-    get_custom_objects().update({'normal_activation': Activation(normal_activation)})
-    return dist.cdf(x)
-
-
-get_custom_objects().update({'normal_activation': Activation(normal_activation)})
 
 
 def generate_time_layer(i, n_leg, k_dim, leg_input, time_input):
@@ -466,35 +344,69 @@ def generate_time_layer(i, n_leg, k_dim, leg_input, time_input):
     return ideal_points_time
 
 
-def MOAmodels(n_leg, n_votes,
-              k_dim=2,
-              k_time=0,
-              leg_input_dropout=0.0,
-              bill_input_dropout=0.0,
-              init_leg_embedding=None,
-              ideal_dropout=0.0,
-              yes_point_dropout=0.0,
-              no_point_dropout=0.0,
-              combined_dropout=0.0,
-              dropout_type="timestep",
-              covariates_list=[],
-              ):
+def normal_activation(x):
+    """Use a standard normal cdf as the activation function
+    """
+    dist = K.tf.distributions.Normal(loc=0.0, scale=1.0)
+    get_custom_objects().update({'normal_activation': Activation(normal_activation)})
+    return dist.cdf(x)
+
+
+# Register the new activation function prior to use
+get_custom_objects().update({'normal_activation': Activation(normal_activation)})
+
+
+def NNnominate(n_leg, n_votes,
+               k_dim=2,
+               k_time=0,
+               init_leg_embedding=None,
+               ideal_dropout=0.0,
+               yes_point_dropout=0.0,
+               no_point_dropout=0.0,
+               combined_dropout=0.0,
+               dropout_type="timestep",
+               covariates_list=[],
+               ):
+    """A function to build a dwnominate style neural network
+
+    # Arguments:
+        n_leg (int): the number of legislators in the model
+        n_votes (int): the number of votes in the model
+        k_dim (int): the number of dimensions in the model
+        k_time (int), EXPERIMENTAL: the number of time dimensions in the model,
+            if k_time > 1 a legislator's ideal point at time t is implemented as
+            a polynomial function of degree k_time. Note that the current
+            implementation may result in unexpected behavior (e.g. an ideal
+            point outside the unit sphere)
+        init_leg_embedding (pd.Dataframe): initial values for the legislator
+            embeddings of shape n_leg x k_dim
+        ideal_dropout (float): ideal point dropout rate
+        yes_point_dropout (float): yes point dropout rate
+        no_point_dropout (float): no point dropout rate
+        dropout_type (str): if timestep, an entire bill/legislator will be
+            dropped at random, otherwise, a constant fraction of all weights
+            will be dropped
+        covariates_list (list), EXPERIMENTAL: a list of covariate names to
+            initialize addition of covariates to the model
+    # Returns:
+        A keras model ready for compilation and fit
+    """
+    # Set up inputs for embedding layers, lists of integer ids
     leg_input = Input(shape=(1, ), dtype="int32", name="leg_input")
-    if leg_input_dropout > 0.0:
-        leg_input_drop = Dropout(leg_input_dropout)(leg_input)
-        # leg_input_drop = Lambda(lambda x: K.tf.to_int32(x))(leg_input_drop)
-    else:
-        leg_input_drop = leg_input
     bill_input = Input(shape=(1, ), dtype="int32", name="bill_input")
-    if bill_input_dropout > 0.0:
-        bill_input_drop = Dropout(bill_input_dropout)(bill_input)
-        # bill_input_drop = TimestepDropout(bill_input_dropout)(bill_input)
-    else:
-        bill_input_drop = bill_input
+
+    # Generate inputs
     time_input_list = [generate_time_input(i) for i in range(1, k_time + 1)]
-    # if not init_leg_embedding:
-    #     # If initial weights are not provided, set at random
-    #     init_leg_embedding = pd.DataFrame(np.random.uniform(-1, 1, size=(n_leg, k_dim)))
+
+    # If initial weights are not provided, set at random
+    if init_leg_embedding.empty:
+        init_leg_embedding = pd.DataFrame(np.random.uniform(-1, 1, size=(n_leg, k_dim)))
+
+    # Set up the ideal points embedding layer
+    # OrthReg ensures that the dimensions of the ideal point vector are uncorrelated
+    # MinMaxNorm ensures that all ideal points lie within the unit sphere; note that
+    # this is not the same as ensuring that any ideal points reach the edge of the
+    # unit sphere which is a slight difference from the conventional results.
     ideal_points = Embedding(input_dim=n_leg, output_dim=k_dim, input_length=1, name="ideal_points",
                              # embeddings_initializer=TruncatedNormal(mean=0.0, stddev=0.05, seed=None),
                              embeddings_regularizer=OrthReg(1e-1),
@@ -505,76 +417,87 @@ def MOAmodels(n_leg, n_votes,
                              # embeddings_constraint=UnitMetric(axis=1),
                              embeddings_constraint=MinMaxNorm(min_value=0.0, max_value=1.0, axis=1, rate=1.0),
                              weights=[init_leg_embedding.values],
-                             )(leg_input_drop)
+                             )(leg_input)
+    # Dropout regularization of the ideal points
     if ideal_dropout > 0.0:
-        ideal_points = TimestepDropout(ideal_dropout)(ideal_points)
+        if dropout_type == "timestep":
+            ideal_points = TimestepDropout(ideal_dropout)(ideal_points)
+        else:
+            ideal_points = Dropout(ideal_dropout)(ideal_points)
+    # Normalize the layers (not strictly necessary)
     # ideal_points = BatchNormalization()(ideal_points)
     # ideal_points = Lambda(standardize, name="norm_ideal_points")(ideal_points)
-    time_layer_list = [generate_time_layer(i, n_leg, k_dim, leg_input_drop, time_input_list[i-1]) for i in range(1, k_time + 1)]
 
-    # flat_ideal_points = Reshape((k_dim,))(ideal_points)
-    # flat_ideal_points_time = Reshape((k_dim,))(ideal_points_time)
+    # Obtain layers for time (if any)
+    time_layer_list = [generate_time_layer(i, n_leg, k_dim, leg_input, time_input_list[i-1]) for i in range(1, k_time + 1)]
 
+    # Join the time layers with the embedding layer
     if k_time == 0:
         main_ideal_points = ideal_points
     else:
         main_ideal_points = Add()([ideal_points] + time_layer_list)
-    # main_ideal_points = Lambda(standardize, name="norm_ideal_points")(main_ideal_points)
     # main_ideal_points = BatchNormalization()(main_ideal_points)
+    # main_ideal_points = Lambda(standardize, name="norm_ideal_points")(main_ideal_points)
 
+    # Reshape to drop unecessary dimensions left from embeddings
     flat_ideal_points = Reshape((k_dim,))(main_ideal_points)
 
+    # Generate yes_point embedding layer
     yes_point = Embedding(input_dim=n_votes, output_dim=k_dim, input_length=1, name="yes_point",
                           embeddings_constraint=MinMaxNorm(min_value=0.0, max_value=1.0, axis=1, rate=1.0),
                           # embeddings_initializer=TruncatedNormal(mean=0.0, stddev=0.3, seed=None),
-                          )(bill_input_drop)
-
+                          )(bill_input)
+    # yes_point dropout regularization
     if yes_point_dropout > 0.0:
         if dropout_type == "timestep":
             yes_point = TimestepDropout(yes_point_dropout, seed=65)(yes_point)
         else:
             yes_point = Dropout(yes_point_dropout, seed=65)(yes_point)
+    # Reshape to drop unnecessary dimensions left from embeddings
     flat_yes_point = Reshape((k_dim,))(yes_point)
 
+    # Generate no_point embedding layer
     no_point = Embedding(input_dim=n_votes, output_dim=k_dim, input_length=1, name="no_point",
                          embeddings_constraint=MinMaxNorm(min_value=0.0, max_value=1.0, axis=1, rate=1.0),
                          # embeddings_initializer=TruncatedNormal(mean=0.0, stddev=0.3, seed=None),
-                         )(bill_input_drop)
+                         )(bill_input)
+    # no_point dropout regularization
     if no_point_dropout > 0.0:
         if dropout_type == "timestep":
             no_point = TimestepDropout(no_point_dropout, seed=65)(no_point)
         else:
             no_point = Dropout(no_point_dropout, seed=65)(no_point)
+    # Reshape to drop unnecessary dimensions left from embeddings
     flat_no_point = Reshape((k_dim,))(no_point)
 
-    # yes_term = WnomTerm(output_dim=1, trainable=True, name="yes_term")([flat_ideal_points, flat_yes_point])
-    # no_term = WnomTerm(output_dim=1, trainable=True, name="no_term")([flat_ideal_points, flat_no_point])
-    #
-    # combined = Subtract()([yes_term, no_term])
-
+    # Combine ideal_points, yes_points, and no_points using a custom dwnominate layer
     combined = JointWnomTerm(output_dim=1, trainable=True, name="wnom_term",
                              # kernel_constraint=SumToOne(),
                              # kernel_regularizer=regularizers.l2(1e-2),
                              )([flat_ideal_points, flat_yes_point, flat_no_point])
+    # Combined dropout regularization
+    # Setting this sets salience weights for a random dimension to 0
     if combined_dropout > 0:
         combined = Dropout(combined_dropout)(combined)
 
+    # Include the covariates (if any)
     if covariates_list:
         print(covariates_list)
         covariates = Input(shape=(len(covariates_list), ), name="covariates")
         combined = Concatenate()([combined, covariates])
 
-    # combined = K.print_tensor(combined, message="combined is: ")
+    # Final output, a simple logistic layer
     main_output = Dense(1, activation="sigmoid", name="main_output", use_bias=False, kernel_initializer=Constant(1))(combined)
 
+    # Define model, depending on existence of covariates and time elements
     if covariates_list:
         if k_time > 0:
-            model = Model(inputs=[leg_input, bill_input] + [time_input_list] + [covariates], outputs=[main_output])
+            model = Model(inputs=[leg_input, bill_input] + time_input_list + [covariates], outputs=[main_output])
         else:
             model = Model(inputs=[leg_input, bill_input] + [covariates], outputs=[main_output])
     else:
         if k_time > 0:
-            model = Model(inputs=[leg_input, bill_input] + [time_input_list], outputs=[main_output])
+            model = Model(inputs=[leg_input, bill_input] + time_input_list, outputs=[main_output])
         else:
             model = Model(inputs=[leg_input, bill_input], outputs=[main_output])
     return model

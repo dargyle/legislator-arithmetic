@@ -1,3 +1,6 @@
+"""
+A script to generate random votes with known properties
+"""
 import os
 import numpy as np
 import pandas as pd
@@ -8,13 +11,13 @@ DATA_PATH = os.path.expanduser("~/data/leg_math/")
 
 n_leg = 100
 n_bills = 2000
-k_dim = 2
+k_dim = 3
 
 include_covariates = True
 beta_covar = 0.1
 
 # w = np.repeat(0.5, k_dim)
-w = np.array([1.0, 0.5])
+w = np.array([1.0, 0.5, 0.5])
 # Impose sum to one
 # w = w / w.sum()
 beta = 15.0
@@ -60,8 +63,6 @@ votes = pd.DataFrame([(i, j) for i in leg_ids for j in bill_ids],
 votes = pd.merge(votes, ideal_points, left_on="leg_id", right_index=True)
 votes = pd.merge(votes, yes_points, left_on="bill_id", right_index=True)
 votes = pd.merge(votes, no_points, left_on="bill_id", right_index=True)
-# index by leg/bill
-votes = votes.set_index(["leg_id", "bill_id"])
 
 # Find squared differences in each dimension
 for i in range(1, k_dim + 1):
@@ -86,7 +87,7 @@ error = np.random.normal(0, np.sqrt(1 / beta), size=len(votes))
 
 votes["party_in_power"] = 100
 votes["congress"] = 114
-bill_numbers = votes.index.get_level_values(1).str.split("_").str.get(1).astype(int)
+bill_numbers = votes["bill_id"].str.split("_").str.get(1).astype(int)
 votes.loc[bill_numbers > int(n_bills / 2), "party_in_power"] = 200
 votes.loc[bill_numbers > int(n_bills / 2), "congress"] = 115
 if include_covariates:
@@ -101,6 +102,37 @@ elif cdf_type == "logit":
 
 votes["vote_prob"] = vote_prob
 votes["vote"] = 1 * (votes["vote_prob"] > 0.5)
+
+print("Clean data to meet minimum vote conditions")
+min_vote_count = 20
+unanimity_percentage = 0.035
+
+voter_condition = True
+unanimity_condition = True
+while voter_condition or unanimity_condition:
+    print("Testing legislator vote counts")
+    leg_vote_counts = votes["leg_id"].value_counts()
+    valid_legs = leg_vote_counts[leg_vote_counts > min_vote_count]
+    valid_leg_ids = pd.DataFrame(valid_legs.index, columns=["leg_id"])
+    n_leg_diff = len(leg_vote_counts) - len(valid_legs)
+    if n_leg_diff > 0:
+        votes = votes.merge(valid_leg_ids, on="leg_id", how="inner")
+    print("Dropped {} legislators with fewer than {} votes".format(n_leg_diff, min_vote_count))
+    voter_condition = (n_leg_diff > 0)
+
+    print("Testing unanimity condition")
+    vote_percentages = votes.groupby("bill_id")[["vote"]].mean()
+    nonunanimous_votes = vote_percentages[(vote_percentages["vote"] < (1 - unanimity_percentage)) &
+                                          (vote_percentages["vote"] > unanimity_percentage)]
+    nonunanimous_bill_ids = pd.DataFrame(nonunanimous_votes.index)
+    n_vote_diff = len(vote_percentages) - len(nonunanimous_bill_ids)
+    if n_vote_diff > 0:
+        votes = votes.merge(nonunanimous_bill_ids, on="bill_id", how="inner")
+    print("Dropped {} votes with fewer than {}% voting in the minority".format(n_vote_diff, unanimity_percentage * 100))
+    unanimity_condition = (n_vote_diff > 0)
+
+# index by leg/bill
+votes = votes.set_index(["leg_id", "bill_id"])
 
 # Map to Poole/Rosenthal recordings
 roll_call = votes["vote"].map({1: 1, 0: 6}).unstack()
