@@ -21,6 +21,7 @@ date: "`r format(Sys.time(), '%B %d, %Y')`"
 geometry: margin=1in
 fontfamily: mathpazo
 fontsize: 11pt
+graphics: yes
 # spacing: double
 # bibliography: ~/Dropbox/master.bib
 # biblio-style: apsr
@@ -29,9 +30,50 @@ fontsize: 11pt
 ```{r setup, include=FALSE}
 # Setup a python instance to use
 library(reticulate)
+use_condaenv("leg_math")
 ```
 
 ```{python, include=FALSE}
+import os
+import numpy as np
+import pandas as pd
+
+import pickle
+
+from leg_math.keras_helpers import NNnominate
+from leg_math.data_processing import process_data
+
+from keras.utils import plot_model
+
+DATA_PATH = os.path.expanduser("~/data/leg_math/")
+
+i = 2
+data_params = dict(
+               data_type="test",
+               congress_cutoff=114,
+               k_dim=i,
+               k_time=0,
+               covariates_list=[],
+               )
+# vote_data = process_data(**data_params, return_vote_df=False)
+vote_data, vote_df = process_data(**data_params, return_vote_df=True)
+model_params = {
+                "n_leg": vote_data["J"],
+                "n_votes": vote_data["M"],
+                "k_dim": data_params["k_dim"],
+                "k_time": data_params["k_time"],
+                "init_leg_embedding": vote_data["init_embedding"],
+                "yes_point_dropout": 0.0,
+                "no_point_dropout": 0.0,
+                "combined_dropout": 0.5,
+                "dropout_type": "timestep",
+                "covariates_list": data_params["covariates_list"],
+                }
+
+model = NNnominate(**model_params)
+
+plot_model(model, to_file='model.png')
+
 answer = '42'
 ```
 
@@ -63,11 +105,19 @@ We suggest that 1. the model that predicts the best *on a held out sample of vot
 
 # Technical Details
 
+
+```{r echo=FALSE, out.width='75%', fig.cap="\\label{fig:model1}Base Model", fig.align='center'}
+knitr::include_graphics('model.png')
+```
+
 We rely on several simple techniques from machine learning
 1. Out of sample testing
 2. Dropout regularization
 
+Out of sample testing provides clear insight about the impact of a decision. Does it make sense to add another dimension? How much do dynamic ideal points help?
+
 Dropout in two places: 1. Each dimension to ensure fitting even if first dimensions dominates. 2. On bill embeddings (to not overfit to a specific bill). Why not on legislators? The structure of the dynamic part of the model doesn't allow this easily.
+
 
 # Results
 
@@ -89,4 +139,10 @@ this is inline `r py$answer` and
 ```{r}
 py$answer
 ```
+
+
+```{python}
+pass
+```
+
 

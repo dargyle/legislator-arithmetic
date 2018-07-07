@@ -25,6 +25,7 @@ def process_data(data_type="test", congress_cutoff=0, k_dim=1, k_time=0,
             the model
         OPTIONAL: vote_df: a pandas dataframe of the votes
     '''
+    print("Load raw data")
     if data_type == "votes":
         vote_df = pd.read_feather(DATA_PATH + "vote_df_cleaned.feather")
     if data_type == "cosponsor":
@@ -67,6 +68,7 @@ def process_data(data_type="test", congress_cutoff=0, k_dim=1, k_time=0,
         vote_df = vote_df.rename(columns={"bill_id": "vote_id"})
         vote_df["init_value"] = vote_df["partyCode"].map({100: -1, 200: 1})
 
+    print("Limit the sample")
     if congress_cutoff:
         vote_df = vote_df[vote_df["congress"] >= congress_cutoff]
 
@@ -79,7 +81,11 @@ def process_data(data_type="test", congress_cutoff=0, k_dim=1, k_time=0,
     leg_ids = vote_df["leg_id"].unique()
     vote_ids = vote_df["vote_id"].unique()
 
-    vote_df_temp = vote_df.copy()
+    if return_vote_df:
+        vote_df_temp = vote_df.copy()
+    else:
+        # Avoid unecessary data copy if not returning raw data
+        vote_df_temp = vote_df
     leg_crosswalk = pd.Series(leg_ids).to_dict()
     leg_crosswalk_rev = dict((v, k) for k, v in leg_crosswalk.items())
     vote_crosswalk = pd.Series(vote_ids).to_dict()

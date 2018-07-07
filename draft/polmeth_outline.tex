@@ -79,6 +79,15 @@
 \newcommand{\ErrorTok}[1]{\textcolor[rgb]{0.64,0.00,0.00}{\textbf{#1}}}
 \newcommand{\NormalTok}[1]{#1}
 
+\usepackage{graphicx,grffile}
+\makeatletter
+\def\maxwidth{\ifdim\Gin@nat@width>\linewidth\linewidth\else\Gin@nat@width\fi}
+\def\maxheight{\ifdim\Gin@nat@height>\textheight\textheight\else\Gin@nat@height\fi}
+\makeatother
+% Scale images if necessary, so that they will not overflow the page
+% margins by default, and it is still possible to overwrite the defaults
+% using explicit options in \includegraphics[width, height, ...]{}
+\setkeys{Gin}{width=\maxwidth,height=\maxheight,keepaspectratio}
 
 \title{Legislator Arithmetic \thanks{The code for this method is available at the author's github repository.}  }
 
@@ -255,7 +264,44 @@ somewhat of an afterthought. On the other hand, computer science
 implementations largely focus on predicting legislator votes, without
 concern regarding the ideal points themselves.
 
+Combining the insights of these two fields, we wish to have the most
+predictive power without overfitting. We can then interpret the most
+predictive ideal points for insights.
+
+We suggest that 1. the model that predicts the best \emph{on a held out
+sample of votes} provides the most insight into ideal points and 2. that
+there is a clear tradeoff between explanatory power and ease of
+interpretation of ideal point models that should be expliit.\footnote{We
+  will provide evidence that the optimal number of dimesnions for ideal
+  point estimation is larger than most common one or two. It is
+  perfectly reasonable to choose to rely on two dimensions, but the
+  tradeoffs of that choice should be clear.} We implement ideal point
+models in a neural network framework because it's easily extensible and
+transparent. Our results suggest that the two dimensional model relied
+on sacrifices explanatory power in voting decisions.
+
 \section{Technical Details}\label{technical-details}
+
+\begin{figure}
+
+{\centering \includegraphics[width=0.75\linewidth]{model} 
+
+}
+
+\caption{\label{fig:model1}Base Model}\label{fig:unnamed-chunk-2}
+\end{figure}
+
+We rely on several simple techniques from machine learning 1. Out of
+sample testing 2. Dropout regularization
+
+Out of sample testing provides clear insight about the impact of a
+decision. Does it make sense to add another dimension? How much do
+dynamic ideal points help?
+
+Dropout in two places: 1. Each dimension to ensure fitting even if first
+dimensions dominates. 2. On bill embeddings (to not overfit to a
+specific bill). Why not on legislators? The structure of the dynamic
+part of the model doesn't allow this easily.
 
 \section{Results}\label{results}
 
@@ -311,6 +357,12 @@ this is inline 42 and
 \begin{verbatim}
 ## [1] "42"
 \end{verbatim}
+
+\begin{Shaded}
+\begin{Highlighting}[]
+\ControlFlowTok{pass}
+\end{Highlighting}
+\end{Shaded}
 
 
 

@@ -15,11 +15,11 @@ from leg_math.data_processing import process_data
 # Data processing
 DATA_PATH = os.path.expanduser("~/data/leg_math/")
 
-i=1
+
 for i in range(1, 9):
     data_params = dict(
-                   data_type="votes",
-                   congress_cutoff=93,
+                   data_type="test",
+                   congress_cutoff=0,
                    k_dim=i,
                    k_time=1,
                    covariates_list=["in_majority"],
