@@ -9,7 +9,7 @@ from leg_math.data_processing import process_data
 
 DATA_PATH = os.path.expanduser("~/data/leg_math/")
 
-i = 2
+i = 3
 data_params = dict(
                data_type="votes",
                congress_cutoff=114,

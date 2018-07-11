@@ -16,9 +16,9 @@ from leg_math.data_processing import process_data
 DATA_PATH = os.path.expanduser("~/data/leg_math/")
 
 
-for i in range(1, 9):
+for i in range(10, 11):
     data_params = dict(
-                   data_type="test",
+                   data_type="votes",
                    congress_cutoff=0,
                    k_dim=i,
                    k_time=1,

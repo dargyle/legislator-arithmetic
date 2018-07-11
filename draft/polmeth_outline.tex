@@ -264,6 +264,9 @@ somewhat of an afterthought. On the other hand, computer science
 implementations largely focus on predicting legislator votes, without
 concern regarding the ideal points themselves.
 
+Section that outlines the math and notation of WNOMINATE and the item
+response framework.
+
 Combining the insights of these two fields, we wish to have the most
 predictive power without overfitting. We can then interpret the most
 predictive ideal points for insights.
@@ -281,6 +284,84 @@ transparent. Our results suggest that the two dimensional model relied
 on sacrifices explanatory power in voting decisions.
 
 \section{Technical Details}\label{technical-details}
+
+While neural networks have become most strongly associated with
+articifical intelligence, they are, in essence, very flexible
+optimization systems.\footnote{Indeed, there are several papers proving
+  that neural networks can approximate any continuous estimator (cite)}
+All that is required to estimate an ideal point model is to set the
+network structure to match the underlying framework of the ideal point
+model. One example can be seen in Figure \ref{fig:model1}, which
+represents the architecture of a WNOMINATE model as implemented in a
+neural network.
+
+\begin{itemize}
+\item
+  Input layers: The inputs to this model consist of numeric legislator
+  ids. The data is given as a batch of triples,
+  \((legislator\_id, bill\_id, vote)\).
+\item
+  Embedding layers: These layers take the numeric ids and convert them
+  into continuous measures, for example from a specific legislator id to
+  her ideal point. In this model there is one ideal point embedding for
+  legislators, and two embeddings for bills, the yes\_point and the no
+  point, that correspond to numeric values associated with WNOMINATE
+  style estimation. The ideal point layer is restricted in two ways.
+  First, the model has an orthogonality regularizer on the ideal points
+  (cite). This penalizes correlation between ideal point dimensions and
+  ensures that the resulting estimates are orthogonal. They also have a
+  maximum norm constraint, which ensures that the norm of the ideal
+  point vector for any legislator lies within the unit
+  hypersphere.\footnote{Note that the maximum norm constraint does not
+    require that any legislator actually attain a unit norm. This
+    differs somewhat from existing implementations which seem to ensure
+    all dimensions fill the range from {[}-1, 1{]}. If this behavior is
+    desired, it can be easily fixed in postprocessing.}
+\end{itemize}
+
+\begin{itemize}
+\item
+  Reshape layers: Because they are often used for text analysis, by
+  default embedding layers assume that there is a sequence of ids to to
+  transform into the embedding space. Since we have only a single id to
+  embed, these layers drop the dimension associated with the sequence to
+  form a two dimensional tensor.
+\item
+  JointWnomTerm layer: The embedded and reshaped data is fed into a
+  custom neural network layer that implements the conventional WNOMINATE
+  estimation (cite Poole and Rosenthal and the package). Specifically,
+  the layer implements the following calculation
+\end{itemize}
+
+\[ e^{-\frac{1}{2}\sum_{k=1}^s w_k^2 d_{iyk}^2 } - e^{-\frac{1}{2}\sum_{k=1}^s w_k^2 d_{ink}^2 }\]
+
+where \(s\) is the number of dimensions in the model, \(w_k\) is the
+salience weight for dimension \(k\), and \(d_{iyk}^2\) is the distance
+between a legislator's ideal point and the yes point of the bill and
+\(d_{ink}^2\) is the distance between the legislator's ideal point and
+the no point of the bill.
+
+\begin{itemize}
+\item
+  Dropout layer: Dropout regularization (cite original paper) has become
+  an extremely common way of limiting model overfitting, often with the
+  additional benefit of improved behavior during model training. Dropout
+  layers set model weights to 0 at random during interations of the
+  training process. This prevents any single weight dominating the
+  prediction of the algorithm. In this specific instance, the droupout
+  layer sets the salience weight for any given ideology dimension to 0
+  for this specific iteration of the optimzation algorithm. In practice,
+  this has resulted in better model performance.
+\item
+  Dense layer: The quantity obtained in the JointWnomLayer is then used
+  as an input to a Dense layer, parameterised as a logistic regression
+  (sigmoid activation and binary\_crossentropy loss). The single model
+  weight estimated here is denoted \(\beta\) in most NOMINATE models and
+  represents {[}something that I'm having trouble recalling at the
+  moment.{]}
+\end{itemize}
+
+The model begins with
 
 \begin{figure}
 
@@ -363,6 +444,68 @@ this is inline 42 and
 \ControlFlowTok{pass}
 \end{Highlighting}
 \end{Shaded}
+
+\begin{enumerate}
+\def\labelenumi{\arabic{enumi}.}
+\tightlist
+\item
+  How to implement in a neural network
+
+  \begin{enumerate}
+  \def\labelenumii{\alph{enumii}.}
+  \tightlist
+  \item
+    Discuss both parameterizations
+  \item
+    Show convergence plots
+  \item
+    Discuss out of sample fit as the metrics of importance
+  \end{enumerate}
+\item
+  A Neural Network implementation works
+
+  \begin{enumerate}
+  \def\labelenumii{\alph{enumii}.}
+  \tightlist
+  \item
+    It estimates correctly on synthetic data (accuracy tables for both
+    of these)
+  \item
+    It matches results from standard libraries (wnominate and pscl) on
+    both synthetic and real data
+
+    \begin{enumerate}
+    \def\labelenumiii{\roman{enumiii}.}
+    \tightlist
+    \item
+      Show both in sample and out of sample accuracy (will require
+      writing a python wrapper to get predictions from the R results)
+    \end{enumerate}
+  \end{enumerate}
+\item
+  Results and applications of the neural network implementation
+
+  \begin{enumerate}
+  \def\labelenumii{\alph{enumii}.}
+  \tightlist
+  \item
+    What are the optimal number of dimensions? Plot these and discuss
+    tradeoffs
+  \item
+    Applying the model to cosponsorship
+  \item
+    Polarization differences
+
+    \begin{enumerate}
+    \def\labelenumiii{\roman{enumiii}.}
+    \tightlist
+    \item
+      Votes models over time (how to do in multiple dimensions?)
+    \item
+      Compare between cosponsorship and votes
+    \end{enumerate}
+  \end{enumerate}
+\end{enumerate}
 
 
 
