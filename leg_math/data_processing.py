@@ -5,6 +5,39 @@ import pandas as pd
 DATA_PATH = os.path.expanduser("~/data/leg_math/")
 
 
+def drop_unanimous(vote_df,
+                   min_vote_count=20,
+                   unanimity_percentage=0.03,
+                   ):
+
+    voter_condition = True
+    unanimity_condition = True
+
+    while voter_condition or unanimity_condition:
+        print("Testing legislator vote counts")
+        leg_vote_counts = vote_df["leg_id"].value_counts()
+        valid_legs = leg_vote_counts[leg_vote_counts > min_vote_count]
+        valid_leg_ids = pd.DataFrame(valid_legs.index, columns=["leg_id"])
+        n_leg_diff = len(leg_vote_counts) - len(valid_legs)
+        if n_leg_diff > 0:
+            vote_df = vote_df.merge(valid_leg_ids, on="leg_id", how="inner")
+        print("Dropped {} legislators with fewer than {} votes".format(n_leg_diff, min_vote_count))
+        voter_condition = (n_leg_diff > 0)
+
+        print("Testing unanimity condition")
+        vote_percentages = vote_df.groupby("vote_id")[["vote"]].mean()
+        nonunanimous_votes = vote_percentages[(vote_percentages["vote"] < (1 - unanimity_percentage)) &
+                                              (vote_percentages["vote"] > unanimity_percentage)]
+        nonunanimous_vote_ids = pd.DataFrame(nonunanimous_votes.index)
+        n_vote_diff = len(vote_percentages) - len(nonunanimous_vote_ids)
+        if n_vote_diff > 0:
+            vote_df = vote_df.merge(nonunanimous_vote_ids, on="vote_id", how="inner")
+        print("Dropped {} votes with fewer than {}% voting in the minority".format(n_vote_diff, unanimity_percentage * 100))
+        unanimity_condition = (n_vote_diff > 0)
+
+    return vote_df
+
+
 def process_data(data_type="test", congress_cutoff=0, k_dim=1, k_time=0,
                  return_vote_df=False, validation_split=0.2, covariates_list=[]):
     '''Process a dataframe of votes into the format expected by the model
@@ -26,47 +59,51 @@ def process_data(data_type="test", congress_cutoff=0, k_dim=1, k_time=0,
         OPTIONAL: vote_df: a pandas dataframe of the votes
     '''
     print("Load raw data")
-    if data_type == "votes":
-        vote_df = pd.read_feather(DATA_PATH + "vote_df_cleaned.feather")
-    if data_type == "cosponsor":
-        # vote_df = pd.read_feather(DATA_PATH + "cosponsor/govtrack_cosponsor_data.feather")
-        vote_df = pd.read_feather(DATA_PATH + "cosponsor/govtrack_cosponsor_data_smart_oppose.feather")
-        vote_df = vote_df.drop("icpsr_id", axis=1)
-        sponsor_counts = vote_df.groupby("vote_id")["vote"].sum()
-        min_sponsors = 1
-        multi_sponsored_bills = sponsor_counts[sponsor_counts >= min_sponsors]
-        multi_sponsored_bills.name = "sponsor_counts"
-        vote_df = pd.merge(vote_df, multi_sponsored_bills.to_frame(), left_on="vote_id", right_index=True)
-    if data_type == "test":
-        # roll_call_object = pd.read_csv(DATA_PATH + "/test_votes.csv", index_col=0)
-        # vote_df = roll_call_object.replace({1: 1,
-        #                                     2: 1,
-        #                                     3: 1,
-        #                                     4: 0,
-        #                                     5: 0,
-        #                                     6: 0,
-        #                                     7: np.nan,
-        #                                     8: np.nan,
-        #                                     9: np.nan,
-        #                                     0: np.nan})
-        # vote_df = vote_df.stack().reset_index()
-        # assert not vote_df.isnull().any().any(), "mising codes in votes"
-        # vote_df.columns = ["leg_id",  "vote_id", "vote"]
-        # vote_df["congress"] = 115
-        # vote_df["chamber"] = "s"
-        # leg_data = pd.read_csv(DATA_PATH + "/test_legislators.csv", index_col=0)
-        # if "partyCode" in leg_data.columns:
-        #     leg_data["init_value"] = leg_data["partyCode"].map({100: -1,
-        #                                                         200: 1})
-        # else:
-        #     leg_data["init_value"] = leg_data["party.1"].map({100: -1,
-        #                                                       200: 1})
-        #
-        # # leg_data["init_value"] = 1
-        # vote_df = pd.merge(vote_df, leg_data[["init_value"]], left_on="leg_id", right_index=True)
-        vote_df = pd.read_feather(DATA_PATH + "/test_votes_df.feather")
-        vote_df = vote_df.rename(columns={"bill_id": "vote_id"})
-        vote_df["init_value"] = vote_df["partyCode"].map({100: -1, 200: 1})
+    if isinstance(data_type, str):
+        if data_type == "votes":
+            vote_df = pd.read_feather(DATA_PATH + "vote_df_cleaned.feather")
+        if data_type == "cosponsor":
+            # vote_df = pd.read_feather(DATA_PATH + "cosponsor/govtrack_cosponsor_data.feather")
+            vote_df = pd.read_feather(DATA_PATH + "cosponsor/govtrack_cosponsor_data_smart_oppose.feather")
+            vote_df = vote_df.drop("icpsr_id", axis=1)
+            sponsor_counts = vote_df.groupby("vote_id")["vote"].sum()
+            min_sponsors = 1
+            multi_sponsored_bills = sponsor_counts[sponsor_counts >= min_sponsors]
+            multi_sponsored_bills.name = "sponsor_counts"
+            vote_df = pd.merge(vote_df, multi_sponsored_bills.to_frame(), left_on="vote_id", right_index=True)
+        if data_type == "test":
+            # roll_call_object = pd.read_csv(DATA_PATH + "/test_votes.csv", index_col=0)
+            # vote_df = roll_call_object.replace({1: 1,
+            #                                     2: 1,
+            #                                     3: 1,
+            #                                     4: 0,
+            #                                     5: 0,
+            #                                     6: 0,
+            #                                     7: np.nan,
+            #                                     8: np.nan,
+            #                                     9: np.nan,
+            #                                     0: np.nan})
+            # vote_df = vote_df.stack().reset_index()
+            # assert not vote_df.isnull().any().any(), "mising codes in votes"
+            # vote_df.columns = ["leg_id",  "vote_id", "vote"]
+            # vote_df["congress"] = 115
+            # vote_df["chamber"] = "s"
+            # leg_data = pd.read_csv(DATA_PATH + "/test_legislators.csv", index_col=0)
+            # if "partyCode" in leg_data.columns:
+            #     leg_data["init_value"] = leg_data["partyCode"].map({100: -1,
+            #                                                         200: 1})
+            # else:
+            #     leg_data["init_value"] = leg_data["party.1"].map({100: -1,
+            #                                                       200: 1})
+            #
+            # # leg_data["init_value"] = 1
+            # vote_df = pd.merge(vote_df, leg_data[["init_value"]], left_on="leg_id", right_index=True)
+            vote_df = pd.read_feather(DATA_PATH + "/test_votes_df.feather")
+            vote_df = vote_df.rename(columns={"bill_id": "vote_id"})
+            vote_df["init_value"] = vote_df["partyCode"].map({100: -1, 200: 1})
+    else:
+        # Assume that the data_type argument is a vote dataframe
+        vote_df = data_type
 
     print("Limit the sample")
     if congress_cutoff:
@@ -105,32 +142,40 @@ def process_data(data_type="test", congress_cutoff=0, k_dim=1, k_time=0,
     key_index = round(0.2 * N)
     time_passed = [(vote_df_temp["time_passed"] ** i).values for i in range(1, k_time + 1)]
 
+    # Keep only votes that are valid in the dataset
+    train_data = vote_df_temp.iloc[:(N - key_index), :]
+    train_data = drop_unanimous(train_data, min_vote_count=10, unanimity_percentage=0.025)
+    # Ensure test data only contains valid entries
+    test_data = vote_df_temp.iloc[-key_index:, :]
+    test_data = test_data[test_data["leg_id"].isin(train_data["leg_id"])]
+    test_data = test_data[test_data["vote_id"].isin(train_data["vote_id"])]
+
     vote_data = {'J': len(leg_ids),
                  'M': len(vote_ids),
                  'N': N,
-                 'j_train': vote_df_temp["leg_id"].values[:(N - key_index)],
-                 'j_test': vote_df_temp["leg_id"].values[-key_index:],
-                 'm_train': vote_df_temp["vote_id"].values[:(N - key_index)],
-                 'm_test': vote_df_temp["vote_id"].values[-key_index:],
-                 'y_train': vote_df_temp["vote"].astype(int).values[:(N - key_index)],
-                 'y_test': vote_df_temp["vote"].astype(int).values[-key_index:],
+                 'j_train': train_data["leg_id"].values,
+                 'j_test': test_data["leg_id"].values,
+                 'm_train': train_data["vote_id"].values,
+                 'm_test': test_data["vote_id"].values,
+                 'y_train': train_data["vote"].astype(int).values,
+                 'y_test': test_data["vote"].astype(int).values,
                  'time_passed_train': [i[:(N - key_index)] for i in time_passed],
                  'time_passed_test': [i[-key_index:] for i in time_passed],
                  'init_embedding': init_embedding,
                  'vote_crosswalk': vote_crosswalk,
                  'leg_crosswalk': leg_crosswalk,
-                 'covariates_train': vote_df_temp[covariates_list].values[:(N - key_index), :],
-                 'covariates_test': vote_df_temp[covariates_list].values[-key_index:, :],
+                 'covariates_train': train_data[covariates_list].values,
+                 'covariates_test': test_data[covariates_list].values,
                  }
 
     # Export a pscl rollcall type object of the training data
-    if data_type == 'test':
-        export_vote_df = vote_df_temp.iloc[:(N - key_index), :]
-        export_vote_df = export_vote_df[["leg_id", "vote_id", "vote"]]
-        export_vote_df["leg_id"] = export_vote_df["leg_id"].map(leg_crosswalk)
-        export_vote_df["vote_id"] = export_vote_df["vote_id"].map(vote_crosswalk)
-        roll_call = export_vote_df.set_index(["leg_id", "vote_id"])["vote"].map({1: 1, 0: 6}).unstack()
-        roll_call.fillna(9).astype(int).to_csv(DATA_PATH + "/test_votes.csv")
+    # if data_type == 'test':
+    #     export_vote_df = vote_df_temp.iloc[:(N - key_index), :]
+    #     export_vote_df = export_vote_df[["leg_id", "vote_id", "vote"]]
+    #     export_vote_df["leg_id"] = export_vote_df["leg_id"].map(leg_crosswalk)
+    #     export_vote_df["vote_id"] = export_vote_df["vote_id"].map(vote_crosswalk)
+    #     roll_call = export_vote_df.set_index(["leg_id", "vote_id"])["vote"].map({1: 1, 0: 6}).unstack()
+    #     roll_call.fillna(9).astype(int).to_csv(DATA_PATH + "/test_votes.csv")
 
     init_leg_embedding_final = pd.DataFrame(np.random.uniform(-1.0, 1.0, size=(vote_data["J"], k_dim)))
     init_leg_embedding_final.iloc[:, 0] = init_leg_embedding_final.iloc[:, 0].abs() * vote_data["init_embedding"]["init_value"]
@@ -139,6 +184,7 @@ def process_data(data_type="test", congress_cutoff=0, k_dim=1, k_time=0,
 
     vote_data['init_embedding'] = init_leg_embedding_final
 
+    # TODO: Refactor do ditch the dual return
     if return_vote_df:
         return vote_data, vote_df
     else:
@@ -179,6 +225,8 @@ if __name__ == '__main__':
         leg_data = pd.read_feather(DATA_PATH + "leg_data.feather")
         party_data = pd.read_feather(DATA_PATH + "party_data.feather")
 
+    assert not roll_call_votes.duplicated(["leg_id", "vote_id"]).any(), "Duplicated leg/vote pairs!"
+
     leg_party = leg_data[["leg_id", "party_code"]].drop_duplicates()
     leg_party[leg_party["leg_id"].duplicated(keep=False)].sort_values("leg_id")
 
@@ -204,41 +252,24 @@ if __name__ == '__main__':
 
     print("Subset to valid votes")
     vote_df = roll_call_votes.dropna(subset=["vote"]).copy().reset_index(drop=True)
+    assert not vote_df.duplicated(["leg_id", "vote_id"]).any(), "Duplicated leg/vote pairs!"
     vote_df.to_feather(DATA_PATH + "vote_df_raw.feather")
+    # vote_df = pd.read_feather(DATA_PATH + "vote_df_raw.feather")
     # initial_congress = 110
     # vote_df = vote_df[vote_df["congress"] >= initial_congress].copy()
 
     print("Clean data to meet minimum vote conditions")
-    min_vote_count = 20
-    unanimity_percentage = 0.03
+    vote_df = drop_unanimous(vote_df)
 
-    voter_condition = True
-    unanimity_condition = True
-    while voter_condition or unanimity_condition:
-        print("Testing legislator vote counts")
-        leg_vote_counts = vote_df["leg_id"].value_counts()
-        valid_legs = leg_vote_counts[leg_vote_counts > min_vote_count]
-        valid_leg_ids = pd.DataFrame(valid_legs.index, columns=["leg_id"])
-        n_leg_diff = len(leg_vote_counts) - len(valid_legs)
-        if n_leg_diff > 0:
-            vote_df = vote_df.merge(valid_leg_ids, on="leg_id", how="inner")
-        print("Dropped {} legislators with fewer than {} votes".format(n_leg_diff, min_vote_count))
-        voter_condition = (n_leg_diff > 0)
-
-        print("Testing unanimity condition")
-        vote_percentages = vote_df.groupby("vote_id")[["vote"]].mean()
-        nonunanimous_votes = vote_percentages[(vote_percentages["vote"] < (1 - unanimity_percentage)) &
-                                              (vote_percentages["vote"] > unanimity_percentage)]
-        nonunanimous_vote_ids = pd.DataFrame(nonunanimous_votes.index)
-        n_vote_diff = len(vote_percentages) - len(nonunanimous_vote_ids)
-        if n_vote_diff > 0:
-            vote_df = vote_df.merge(nonunanimous_vote_ids, on="vote_id", how="inner")
-        print("Dropped {} votes with fewer than {}% voting in the minority".format(n_vote_diff, unanimity_percentage * 100))
-        unanimity_condition = (n_vote_diff > 0)
+    assert not vote_df.duplicated(["leg_id", "vote_id"]).any(), "Duplicated leg/vote pairs!"
 
     leg_data["init_value"] = 0
     leg_data.loc[leg_data["party_code"] == 100, "init_value"] = -1
     leg_data.loc[leg_data["party_code"] == 200, "init_value"] = 1
-    vote_df = pd.merge(vote_df, leg_data[["leg_id", "init_value", "in_majority"]].drop_duplicates(), on="leg_id")
+    merge_leg_data = leg_data[["congress", "leg_id", "init_value", "in_majority"]].drop_duplicates(["congress", "leg_id"])
+    vote_df = pd.merge(vote_df, merge_leg_data, on=["congress", "leg_id"])
+    assert not vote_df.duplicated(["leg_id", "vote_id"]).any(), "Duplicated leg/vote pairs!"
 
     vote_df.to_feather(DATA_PATH + "vote_df_cleaned.feather")
+
+    len(vote_df["vote_id"].unique())

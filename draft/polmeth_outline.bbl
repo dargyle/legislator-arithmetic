@@ -1,0 +1,60 @@
+\begin{thebibliography}{xx}
+
+\harvarditem[Brock et~al.]{Brock, Lim, Ritchie \harvardand\
+  Weston}{2016}{orthreg1}
+Brock, Andrew, Theodore Lim, James~M. Ritchie \harvardand\ Nick Weston. 2016.
+\newblock ``Neural Photo Editing with Introspective Adversarial Networks.''
+  {\em CoRR} abs/1609.07093.
+\newline\harvardurl{http://arxiv.org/abs/1609.07093}
+
+\harvarditem[Carroll et~al.]{Carroll, Lewis, Lo, Poole \harvardand\
+  Rosenthal}{2009}{carroll2009measuring}
+Carroll, Royce, Jeffrey~B Lewis, James Lo, Keith~T Poole \harvardand\ Howard
+  Rosenthal. 2009.
+\newblock ``Measuring bias and uncertainty in DW-NOMINATE ideal point estimates
+  via the parametric bootstrap.'' {\em Political Analysis} 17(3):261--275.
+
+\harvarditem[Clinton, Jackman \harvardand\ Rivers]{Clinton, Jackman
+  \harvardand\ Rivers}{2004}{clinton2004statistical}
+Clinton, Joshua, Simon Jackman \harvardand\ Douglas Rivers. 2004.
+\newblock ``The statistical analysis of roll call data.'' {\em American
+  Political Science Review} 98(2):355--370.
+
+\harvarditem{Jackman}{2017}{pscl}
+Jackman, Simon. 2017.
+\newblock {\em {pscl}: Classes and Methods for {R} Developed in the Political
+  Science Computational Laboratory}.
+\newblock Sydney, New South Wales, Australia:  United States Studies Centre,
+  University of Sydney.
+\newblock R package version 1.5.2.
+\newline\harvardurl{https://github.com/atahk/pscl/}
+
+\harvarditem[Poole et~al.]{Poole, Lewis, Lo \harvardand\
+  Carroll}{2011}{wnominate}
+Poole, Keith, Jeffrey Lewis, James Lo \harvardand\ Royce Carroll. 2011.
+\newblock ``Scaling Roll Call Votes with {wnominate} in {R}.'' {\em Journal of
+  Statistical Software} 42(14):1--21.
+\newline\harvardurl{http://www.jstatsoft.org/v42/i14/}
+
+\harvarditem{Poole \harvardand\ Rosenthal}{1985}{poole}
+Poole, Keith~T \harvardand\ Howard Rosenthal. 1985.
+\newblock ``A spatial model for legislative roll call analysis.'' {\em American
+  Journal of Political Science} pp.~357--384.
+
+\harvarditem[Srivastava et~al.]{Srivastava, Hinton, Krizhevsky, Sutskever
+  \harvardand\ Salakhutdinov}{2014}{dropout}
+Srivastava, Nitish, Geoffrey Hinton, Alex Krizhevsky, Ilya Sutskever
+  \harvardand\ Ruslan Salakhutdinov. 2014.
+\newblock ``Dropout: A Simple Way to Prevent Neural Networks from
+  Overfitting.'' {\em Journal of Machine Learning Research} 15:1929--1958.
+\newline\harvardurl{http://jmlr.org/papers/v15/srivastava14a.html}
+
+\harvarditem[Vorontsov et~al.]{Vorontsov, Trabelsi, Kadoury \harvardand\
+  Pal}{2017}{orthreg2}
+Vorontsov, Eugene, Chiheb Trabelsi, Samuel Kadoury \harvardand\ Chris Pal.
+  2017.
+\newblock ``On orthogonality and learning recurrent networks with long term
+  dependencies.'' {\em CoRR} abs/1702.00071.
+\newline\harvardurl{http://arxiv.org/abs/1702.00071}
+
+\end{thebibliography}

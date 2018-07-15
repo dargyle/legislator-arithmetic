@@ -45,7 +45,7 @@ test_data = rollcall(as.matrix(roll_call_mat), yea=1, nay=6, notInLegis=9,
                      vote.names = colnames(roll_call_mat)
                      )
 
-wnom1 = wnominate(test_data, polarity=c(1), dims=1)
+wnom1 = wnominate(test_data, polarity=c(1), dims=1, lop=0.01, minvotes=2)
 write.csv(wnom1$legislators, file="~/data/leg_math/wnom1D_results.csv")
 rownames(wnom1$rollcalls) = colnames(test_data$votes)
 write.csv(wnom1$rollcalls, file="~/data/leg_math/wnom1D_rollcalls.csv")
