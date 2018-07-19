@@ -27,10 +27,21 @@ Clinton, Joshua, Simon Jackman \harvardand\ Douglas Rivers. 2004.
 \newblock ``The statistical analysis of roll call data.'' {\em American
   Political Science Review} 98(2):355--370.
 
+\harvarditem{Cybenko}{1989}{cybenko1989approximation}
+Cybenko, George. 1989.
+\newblock ``Approximation by superpositions of a sigmoidal function.'' {\em
+  Mathematics of control, signals and systems} 2(4):303--314.
+
 \harvarditem{Gerrish \harvardand\ Blei}{2011}{gerrish}
 Gerrish, Sean \harvardand\ David~M Blei. 2011.
 \newblock Predicting legislative roll calls from text.  In {\em Proceedings of
   ICML}.
+
+\harvarditem{Hornik}{1991}{hornik1991}
+Hornik, Kurt. 1991.
+\newblock ``Approximation capabilities of multilayer feedforward networks.''
+  {\em Neural Networks} 4(2):251 -- 257.
+\newline\harvardurl{http://www.sciencedirect.com/science/article/pii/089360809190009T}
 
 \harvarditem[Imai, Lo \harvardand\ Olmsted]{Imai, Lo \harvardand\
   Olmsted}{2016}{imai2016fast}
@@ -64,6 +75,11 @@ Kraft, Peter, Hirsh Jain \harvardand\ Alexander~M Rush. 2016.
 Mandt, Stephan, Matthew~D Hoffman \harvardand\ David~M Blei. 2017.
 \newblock ``Stochastic gradient descent as approximate Bayesian inference.''
   {\em The Journal of Machine Learning Research} 18(1):4873--4907.
+
+\harvarditem{Marble \harvardand\ Tyler}{2017}{marble2017much}
+Marble, William \harvardand\ Ma Tyler. 2017.
+\newblock How Much Should We Trust Ideal Point Estimates from Surveys?
+  Technical report.
 
 \harvarditem[Poole et~al.]{Poole, Lewis, Lo \harvardand\
   Carroll}{2011}{wnominate}

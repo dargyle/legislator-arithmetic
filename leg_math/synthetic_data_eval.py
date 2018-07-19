@@ -61,7 +61,7 @@ def get_probs_from_nominate(votes, ideal_points, yes_points, no_points, w, beta,
 
 
 # Call generate random votes to ensure data exists
-data_type = "test"
+data_type = "votes"
 if data_type == "test":
     random_votes = generate_random_votes(w=np.array([1.5, 0.75, 0.75]))
     random_votes = random_votes.reset_index()
@@ -278,7 +278,12 @@ for i in range(1, top_dim):
                               left_index=True, right_index=True,
                               suffixes=("_nn", "_wnom"))
     combined_ideal.to_pickle(DATA_PATH + f"{data_type}_{k_dim}_combined_ideal_data.pkl")
-    # sns.pairplot(combined_ideal.filter(regex="coord"), size=3, diag_kind="kde", markers=".")
+    # sns.pairplot(combined_ideal.filter(regex=r"coord\dD_"), size=3, diag_kind="kde", plot_kws={'alpha': 0.5})
+    # def corrfunc(x, y, **kws):
+    #     r, _ = stats.pearsonr(x, y)
+    #     ax = plt.gca()
+    #     ax.annotate("r = {:.2f}".format(r), xy=(.9, .1), xycoords=ax.transAxes)
+    # g = sns.pairplot(combined_ideal.filter(regex=r"coord\dD_nn|true_coord"), size=3, diag_kind="kde", plot_kws={'alpha': 0.5}); g.map_lower(corrfunc)
 
 final_metrics = pd.concat(metrics_list)
 final_metrics.to_pickle(DATA_PATH + f"{data_type}_data_metrics.pkl")
@@ -343,3 +348,15 @@ ax2.lines[-2].set_marker("^")
 ax2.legend()
 ax2.set(xlim=(0.9, top_dim - 1 + 0.1), xticks=range(1, top_dim), ylabel="accuracy", xlabel="Number of Dimensions")
 fig
+
+fig, axes = plt.subplots(3, 3, figsize=(9, 9))
+axes
+
+
+
+combined_ideal = pd.read_pickle(DATA_PATH + "votes_2_combined_ideal_data.pkl")
+
+import pytablewriter
+writer = pytablewriter.MarkdownTableWriter()
+writer.from_dataframe(combined_ideal.filter(regex=r"coord\dD_").corr().reset_index())
+writer.write_table()

@@ -16,16 +16,18 @@ from leg_math.data_processing import process_data
 DATA_PATH = os.path.expanduser("~/data/leg_math/")
 
 
-for i in range(10, 11):
+for i in range(1, 11):
     data_params = dict(
                    data_type="votes",
-                   congress_cutoff=0,
+                   congress_cutoff=110,
                    k_dim=i,
-                   k_time=1,
-                   covariates_list=["in_majority"],
+                   k_time=0,
+                   covariates_list=[],
                    )
-
-    vote_data = process_data(**data_params, return_vote_df=False)
+    if data_params["data_type"] == "cosponsor":
+        vote_data = process_data(**data_params, return_vote_df=False, unanimity_check=False)
+    else:
+        vote_data = process_data(**data_params, return_vote_df=False, unanimity_check=True)
     # vote_data, vote_df = process_data(**data_params, return_vote_df=True)
     model_params = {
                     "n_leg": vote_data["J"],

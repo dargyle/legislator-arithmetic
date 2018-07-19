@@ -1,0 +1,17 @@
+---
+title: An Example R Markdown Document
+subtitle: (A Subtitle Would Go Here if This Were a Class)
+author: Daniel Argyle
+institute: FiscalNote
+output:
+  ioslides_presentation:
+      logo: "~/downloads/fn.logo.1.transparent.png"
+---
+
+# Ideal points in a neural network
+
+## Background
+This is a slide
+
+# More
+

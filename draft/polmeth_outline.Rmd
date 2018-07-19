@@ -11,11 +11,11 @@ output:
     latex_engine: pdflatex
     template: ~/packages/svm-r-markdown-templates/svm-latex-ms.tex
 title: "Legislator Arithmetic"
-thanks: "The code for this method is available at the author's github repository."
+thanks: "The code for this method is available at the author's github: https://github.com/dargyle/legislator-arithmetic"
 author:
 - name: Daniel Argyle
   affiliation: FiscalNote
-abstract: "See intro..."
+abstract: "We introduce a neural network implementation of ideal point estimation called NN-NOMINATE that scales well to large datasets and allows incorporation of additional metadata. We test the model on synthetic data, the entire corpus of US Congressional votes, and cosponsorship decisions since the 93rd Congress. These experiments show that the model behaves as expected and that, when using a held out set of votes as a validation set, we are able to make informed decisions about the model structure including the number of dimesions and whether or not to add covariates."
 keywords: "ideal point estimation"
 date: "`r format(Sys.time(), '%B %d, %Y')`"
 geometry: margin=1in
@@ -47,6 +47,8 @@ from keras.utils import plot_model
 
 import matplotlib.pyplot as plt
 import seaborn as sns
+
+from scipy import stats
 
 DATA_PATH = os.path.expanduser("~/data/leg_math/")
 
@@ -135,55 +137,181 @@ for data_type in ["test", "votes"]:
     fig
     
     fig.savefig(f"{data_type}_metrics_with_wnom.png", bbox_inches='tight')
-    fig.clf()    
+    fig.clf()
+
+def corrfunc(x, y, **kws):
+        r, _ = stats.pearsonr(x, y)
+        ax = plt.gca()
+        ax.annotate("r = {:.2f}".format(r), xy=(.9, .1), xycoords=ax.transAxes)
+
+combined_ideal = pd.read_pickle(DATA_PATH + "test_3_combined_ideal_data.pkl")
+nn_true_plot = sns.pairplot(combined_ideal.filter(regex=r"coord\dD_nn|true_coord"), size=3, diag_kind="kde", plot_kws={'alpha': 0.5}); nn_true_plot.map_lower(corrfunc)
+fig = nn_true_plot.fig
+fig.savefig(os.path.expanduser("nn_true_plot.png"))
+fig.clf()
+
+algo_comp_plot = sns.pairplot(combined_ideal.filter(regex=r"coord\dD_"), size=3, diag_kind="kde", plot_kws={'alpha': 0.5}); algo_comp_plot.map_lower(corrfunc)
+fig = algo_comp_plot.fig
+fig.savefig(os.path.expanduser("algo_comp_plot.png"))
+fig.clf()
+
+combined_ideal = pd.read_pickle(DATA_PATH + "votes_2_combined_ideal_data.pkl")
+votes_com_plot = sns.pairplot(combined_ideal.filter(regex=r"coord\dD_"), size=3, diag_kind="kde", plot_kws={'alpha': 0.5}); votes_com_plot.map_lower(corrfunc)
+fig = votes_com_plot.fig
+fig.savefig(os.path.expanduser("votes_comp_plot.png"))
+fig.clf()
+
+dims = range(1, 11)
+train_metrics_df = pd.DataFrame(index=dims, columns=["log_loss", "accuracy_score"])
+test_metrics_df = pd.DataFrame(index=dims, columns=["log_loss", "accuracy_score"])
+for i in range(1, 11):
+    data_params = dict(
+                   data_type="votes",
+                   congress_cutoff=0,
+                   k_dim=i,
+                   k_time=0,
+                   covariates_list=["in_majority"],
+                   )
+
+    fname_weights = '/models/{data_type}_model_weights_{congress_cutoff}_{k_dim}_{k_time}.h5'.format(**data_params)
+    fname_history = '/models/{data_type}_train_history_{congress_cutoff}_{k_dim}_{k_time}.pkl'.format(**data_params)
+
+    with open(DATA_PATH + fname_history, 'rb') as file_pi:
+        history_dict = pickle.load(file_pi)
+
+    train_metrics_df.loc[i, "log_loss"] = pd.Series(history_dict["loss"]).min()
+    train_metrics_df.loc[i, "accuracy_score"] = pd.Series(history_dict["acc"]).max()
+
+    test_metrics_df.loc[i, "log_loss"] = pd.Series(history_dict["val_loss"]).min()
+    test_metrics_df.loc[i, "accuracy_score"] = pd.Series(history_dict["val_acc"]).max()
+
+test_metrics_df["dataset"] = "test"
+
+# TODO: rerun so I don't have to use this hack
+train_metrics_df["log_loss"] = train_metrics_df["log_loss"] / 2
+train_metrics_df["accuracy_score"] = train_metrics_df["accuracy_score"] + 0.2
+train_metrics_df["dataset"] = "train"
+
+metrics_df = pd.concat([test_metrics_df, train_metrics_df])
+metrics_df.index.name = "k_dim"
+metrics_df = metrics_df.reset_index()
+
+top_dim = 11
+plot_data = metrics_df.set_index(["k_dim", "dataset"]).unstack(level=["dataset"]).unstack().reset_index()
+plot_data = plot_data.rename(columns={"level_0": "metric", 0: "score"})
+fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 6))
+# sns.regplot(x, y, ax=ax1)
+# sns.kdeplot(x, ax=ax2)
+sns.tsplot(data=plot_data[(plot_data["metric"] == "log_loss")],
+           time="k_dim", unit="dataset", condition="dataset", value="score",
+           err_style=None, marker="o", ax=ax1)
+ax1.set(xlim=(0.9, top_dim - 1 + 0.1), xticks=range(1, top_dim), ylabel="log-loss", xlabel="Number of Dimensions", title="Log-loss")
+sns.tsplot(data=plot_data[(plot_data["metric"] == "accuracy_score")],
+           time="k_dim", unit="dataset", condition="dataset", value="score",
+           err_style=None, marker="o", ax=ax2)
+ax2.set(xlim=(0.9, top_dim - 1 + 0.1), xticks=range(1, top_dim), ylabel="accuracy", xlabel="Number of Dimensions", title="Accuracy")
+fig
+
+fig.savefig("full_votes_metrics.png", bbox_inches='tight')
+fig.clf()
+
+top_dim = 9
+dims = range(1, top_dim)
+train_metrics_df = pd.DataFrame(index=dims, columns=["log_loss", "accuracy_score"])
+test_metrics_df = pd.DataFrame(index=dims, columns=["log_loss", "accuracy_score"])
+for i in dims:
+    data_params = dict(
+                   data_type="cosponsor",
+                   congress_cutoff=93,
+                   k_dim=i,
+                   k_time=0,
+                   covariates_list=["in_majority"],
+                   )
+
+    fname_weights = '/models/{data_type}_model_weights_{congress_cutoff}_{k_dim}_{k_time}.h5'.format(**data_params)
+    fname_history = '/models/{data_type}_train_history_{congress_cutoff}_{k_dim}_{k_time}.pkl'.format(**data_params)
+
+    with open(DATA_PATH + fname_history, 'rb') as file_pi:
+        history_dict = pickle.load(file_pi)
+
+    train_metrics_df.loc[i, "log_loss"] = pd.Series(history_dict["loss"]).min()
+    train_metrics_df.loc[i, "accuracy_score"] = pd.Series(history_dict["acc"]).max()
+
+    test_metrics_df.loc[i, "log_loss"] = pd.Series(history_dict["val_loss"]).min()
+    test_metrics_df.loc[i, "accuracy_score"] = pd.Series(history_dict["val_acc"]).max()
+
+test_metrics_df["dataset"] = "test"
+
+# TODO: rerun so I don't have to use this hack
+train_metrics_df["log_loss"] = train_metrics_df["log_loss"] / 2
+train_metrics_df["accuracy_score"] = train_metrics_df["accuracy_score"] + 0.2
+train_metrics_df["dataset"] = "train"
+
+metrics_df = pd.concat([test_metrics_df, train_metrics_df])
+metrics_df.index.name = "k_dim"
+metrics_df = metrics_df.reset_index()
+
+plot_data = metrics_df.set_index(["k_dim", "dataset"]).unstack(level=["dataset"]).unstack().reset_index()
+plot_data = plot_data.rename(columns={"level_0": "metric", 0: "score"})
+fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 6))
+# sns.regplot(x, y, ax=ax1)
+# sns.kdeplot(x, ax=ax2)
+sns.tsplot(data=plot_data[(plot_data["metric"] == "log_loss")],
+           time="k_dim", unit="dataset", condition="dataset", value="score",
+           err_style=None, marker="o", ax=ax1)
+ax1.set(xlim=(0.9, top_dim - 1 + 0.1), xticks=range(1, top_dim), ylabel="log-loss", xlabel="Number of Dimensions", title="Log-loss")
+sns.tsplot(data=plot_data[(plot_data["metric"] == "accuracy_score")],
+           time="k_dim", unit="dataset", condition="dataset", value="score",
+           err_style=None, marker="o", ax=ax2)
+ax2.set(xlim=(0.9, top_dim - 1 + 0.1), xticks=range(1, top_dim), ylabel="accuracy", xlabel="Number of Dimensions", title="Accuracy")
+fig
+
+fig.savefig("full_cosponsor_metrics.png", bbox_inches='tight')
+fig.clf()
 ```
 
 # Introduction
 
-We propose a neural network implementation of ideal-point estimation that scales well to large datasets and allows incorporation of additional metadata. Neural networks are well-suited for these models, and the performance benefit, along with distributed computing capabilities, allows application of ideal point estimation to pooled datasets where computation was previously infeasible due to scale. We demonstrate the algorithm on two different datasets, the complete history of US Congressional roll call votes and modern cosponsorship networks, and compare the results against standard ideal point estimation techniques.
+We propose a neural network implementation of ideal-point estimation that scales well to large datasets and allows incorporation of additional metadata, which we call NN-NOMINATE. Neural networks are well suited for these models, and the performance benefit, along with distributed computing capabilities, allows application of ideal point estimation to pooled datasets where computation was previously infeasible due to scale. We demonstrate the algorithm on two different datasets, the complete history of US Congressional roll call votes and modern cosponsorship behavior, and compare the results against standard ideal point estimation techniques.
 
-To evaluate algorithmic performance, we test the resulting estimates on both training and test data by holding out a subset of legislators’ votes. This allows us to compare the quality of different model parameterizations and choice of dimensions while still guarding against overfitting. Specifically, we directly compare the performance of different ideal point parameterizations such as DW-NOMINATE and the conventional Bayesian parameterization. 
+To evaluate algorithmic performance, we test the resulting estimates on both training and test data by holding out a subset of legislators’ votes. This allows us to compare the quality of different model parameterizations and choice of dimensions while still guarding against overfitting. Specifically, we directly compare the performance of NN-NOMINATE to different ideal point parameterizations such as DW-NOMINATE and the conventional Bayesian parameterization. 
 
-We demonstrate the algorithms in two ways. First, we jointly estimate ideal points over the pooled set of US Congressional roll call votes from 1789-2018.  Unidimensional ideal points from the neural network implementation are similar to the conventional DW-NOMINATE results.  However, cross validation scores indicate that the data are better explained with more than one dimension. Clustering the multidimensional ideal points yields intuitive temporal and ideological groupings and provides a more nuanced picture of ideological polarization. 
+We demonstrate NN-NOMINATE in two ways. First, we jointly estimate ideal points over the pooled set of US Congressional roll call votes from 1789-2018.  Unidimensional ideal points from the neural network implementation are similar to the conventional DW-NOMINATE results.  However, cross validation scores indicate that the data are better explained with more than one dimension. Clustering the multidimensional ideal points yields intuitive temporal and ideological groupings and provides a more nuanced picture of ideological polarization. 
 
 Second, we take advantage of the fact that many more bills are sponsored than actually come to a vote and estimate an ideal point distribution over a large set of sponsorship and cosponsorship decisions in the 93rd-114th Congresses. Cosponsorship provides a different perspective on legislators’ beliefs, independent of strategic voting or administrative votes of little ideological salience. We treat cosponsorship as a clear endorsement of a bill’s content and assume that a choice not to cosponsor a bill can be interpreted as something less than full support. When compared to traditional ideal points, cosponsorship ideal points show somewhat different trends in polarization and result in a higher number of optimal dimensions.
 
 
-# Implementing ideal points as a neural network
+# Implementing Ideal Points as a Neural Network
 
-This work is inspired by two similar lines of research in political science and computer science. Speaking broadly[^1], political scientists--from the days of (really old cite), through Poole and Rosenthal \cite{poole}, and up to and including modern contributions--have focused primarily on ideal point estimation as a means to study the ideology space implied by the ideal points themselves. That these methods also predict votes is somewhat of an afterthought. On the other hand, computer science implementations largely focus on using an ideal point framework to predict legislator votes, without concern regarding the ideal points themselves.
+This work is inspired by two similar lines of research in political science and computer science. Speaking broadly[^1], political scientists -- from the the seminal work of \cite{poole} and \cite{clinton2004statistical}, and up to and including modern contributions such as \cite{imai2016fast} -- have focused primarily on ideal point estimation as a means to position legislators within the ideology space. That these methods also predict votes is somewhat of an afterthought. On the other hand, computer science implementations largely focus on using an ideal point framework to predict legislator votes, without interpreting the ideal points themselves (for example see \cite{gerrish,kraft}).
 
 [^1]: A complete review of the literature in either field is beyond the scope of this work, and there are, unsurprisingly, some exceptions to this assertion.
 
-Combining the insights of these two fields, we wish to have the most predictive power without overfitting. We can then interpret the most predictive ideal points for insights.
-
-We suggest that 1. the model that predicts the best *on a held out sample of votes* provides the most insight into ideal points and 2. that there is a clear trade-off between explanatory power and ease of interpretation of ideal point models that should be exploit.[^2]
-
-We implement ideal point models in a neural network framework because it's easily extensible and transparent.  Our results suggest that the two dimensional model relied on sacrifices explanatory power in voting decisions.
+Combining the insights of these two fields, we wish to use the prediction-focused framework of computer science to select the most accurate model, which in turn would provide the most informative ideal point estimations for substantive interpretation. We suggest that 1) the model that predicts the best *on a held out sample of votes* provides the most insight into ideal points and 2) there is a clear trade-off between explanatory power and ease of interpretation of ideal point models that should be made explicit.[^2]
 
 [^2]: We will provide evidence that the optimal number of dimensions for ideal point estimation is larger than the most common one or two. It is perfectly reasonable to choose to rely on two dimensions, but the trade-offs of that choice should be clear.
 
-## Model frameworks
+## Model Frameworks
 
 There are two broad frameworks that have been commonly used for ideal point estimation. Both tie back to spatial voting theory and the idea that a legislator will prefer something that is "near" to them in the ideology space. This ideology space can be paramterized with an aribtrary number of dimensions (denoted with $K$), but in most applications $K$ is set to be 1 or 2.
 
-The first framework, the NOMINATE family, posits that a the probability that a legislator votes yes on a given bill is given by:
+The first framework, the NOMINATE family, posits that the probability that a legislator votes yes on a bill is given by:
 \begin{equation}\label{eq:wnom}
 prob(vote=yea) = \Phi\left(u_{ijy} - u_{ijn}\right) = \Phi\left(\beta \left[\exp\left(-\frac{1}{2}\sum_{k=1}^s w_k^2 d_{ijyk}^2 \right) - \exp\left({-\frac{1}{2}\sum_{k=1}^s w_k^2 d_{ijnk}^2 }\right)\right]\right)
 \end{equation}\noindent
-where $u_{ijy}$ is the utility legislator $i$ receives from voting yes ($y$) on proposal $j$.[^11.] This utility is expressed in terms of the squared distance $d_{ijyk}^2$ between a legislators ideal point and the "yes" outcome point (and similarly $d_{ijnk}^2$ is the distance between the legislator's ideal point and the "no" outcome point). There are also a set of salience weights $w_k^2$ which allow different dimensions to have more impact on the final voting decision. The function $\Phi$ is commonly a normal or logistic cdf, which makes this model, once the weights have been obtained, essentially a probit or logit regression with a single parameter $\beta.$
+where $u_{ijy}$ is the utility legislator $i$ receives from voting yes ($y$) on proposal $j$.[^11.] This utility is expressed in terms of the squared distance $d_{ijyk}^2$ between a legislator's ideal point and the "yes" outcome point (and similarly $d_{ijnk}^2$ is the distance between the legislator's ideal point and the "no" outcome point). There are also a set of salience weights $w_k^2$ which allow different dimensions to have more impact on the final voting decision. The function $\Phi$ is commonly a normal or logistic cdf, which makes this model, once the weights have been obtained, essentially a probit or logit regression with a single parameter $\beta.$
 
 [^11.]: For simplicity, we are surpressing the time dimension that is often present in these models. However, NN-NOMINATE generalizes to include dynamic ideal points as is discussed later in the paper. See also \cite{carroll2009measuring} for more detail about the background of this model.
 
-There item-response framework, commonly associated with \cite{clinton2004statistical}, the predicts a vote as follows:
+The second framework, the item-response family, commonly associated with \cite{clinton2004statistical}, predicts a vote as follows:
 \begin{equation}\label{eq:irt}
 prob(vote=yea) = \Phi\left(\beta_j \cdot \mathbf{x}_i + \alpha_j\right)
 \end{equation}\noindent
-where $\mathbf{x}_i$ is a $K$ dimensional vector of ideal points and again $\Phi$ can correspond to either a logistic or probit model. The bill level parameter $\beta_j$, sometimes refered to as polarity, is multiplied with the ideal point vector and determines the lean of the bill. The parameter $\alpha_j$, sometimes referred to as popularity, determine a baseline approval rate for a specific propsal.
+where $\mathbf{x}_i$ is a $K$ dimensional vector of ideal points and again $\Phi$ can correspond to either a logistic or probit model. The bill level parameter $\beta_j$, sometimes refered to as polarity, is multiplied with the ideal point vector and determines the lean of the bill. The parameter $\alpha_j$, sometimes referred to as popularity, determines a baseline approval rate for a specific proposal.
 
-## The neural network
+## The Neural Network
 
-While neural networks have become most strongly associated with artificial intelligence, they are, in essence, flexible optimization systems fitted using various forms of gradient decent algorithms.[^3] All that is required to estimate an ideal point model using a neural network is to set the network structure to match the underlying framework of the ideal point model. One example can be seen in Figure \ref{fig:model1}, which represents the architecture of a WNOMINATE model. We will walk through each layer of this example in some detail as a baseline for further exploration.
+While neural networks have become most strongly associated with artificial intelligence, they are, in essence, flexible optimization systems fitted using various forms of gradient decent algorithms.[^3] All that is required to estimate an ideal point model using a neural network is to set the network structure to match the underlying framework of the ideal point model. One example can be seen in Figure \ref{fig:model1}, which represents the architecture of a W-NOMINATE model. We will walk through each layer of this example in some detail as a baseline for further exploration.
 
 [^3]: Indeed, while not directly applicable to the models contained here, there are several papers proving that feed forward neural networks can approximate any continuous function \citep(cybenko1989approximation, hornik1991)
 
@@ -191,128 +319,156 @@ While neural networks have become most strongly associated with artificial intel
 knitr::include_graphics('model.png')
 ```
 
-+ Input layers: The inputs to this model consist of numeric ids for both legisators and bills. The data is given as a batch of triples, $(legislator\_id, bill\_id, vote)$.
++ Input layers: The inputs to this model consist of numeric identifiers for both legisators and bills. 
 
-+ Embedding layers: These layers take the numeric ids and convert them into continuous measures, for example mapping a specific legislator id to her ideal point. In this model there is one ideal point embedding for legislators, and two embedding for bills, the yes_point and the no point, that correspond to numeric values associated with WNOMINATE style estimation. The ideal point layer is restricted in two ways. First, the model includes orthogonality regularization on the ideal points \citep{orthreg1, orthreg2}. This penalizes correlation between ideal point dimensions and ensures that the resulting estimates are orthogonal. Ideal point embeddings also have a maximum norm constraint, which ensures that the norm of the ideal point vector for any legislator lies within the unit hypersphere.[^4]
++ Embedding layers: These layers take the numeric identifiers and convert them into continuous parameters, for example mapping a specific legislator to her ideal point vector. In this model there is one ideal point embedding for legislators, and two embeddings for bills, the yes point and the no point, that correspond to numeric values associated with W-NOMINATE style estimation. The ideal point layer is restricted in two ways. First, the model includes orthogonality regularization on the ideal points \citep{orthreg1, orthreg2}. This penalizes correlation between ideal point dimensions and ensures that the resulting estimates are orthogonal. Ideal point embeddings also have a maximum norm constraint, which ensures that the norm of the ideal point vector for any legislator lies within the unit hypersphere.[^4]
 
 [^4]: Note that the maximum norm constraint does not require that any legislator actually attain a unit norm. This differs somewhat from existing implementations which seem to ensure all dimensions fill the range from [-1, 1]. If this behavior is desired, it can be easily fixed in postprocessing.
 
 + Reshape layers: Because they are often used for text analysis, by default embedding layers assume that there is a sequence of ids to to transform into the embedding space. Since we have only a single id to embed, these layers drop the dimension associated with the sequence to form a two dimensional tensor.
 
-+ JointWnomTerm layer: The embedded and reshaped data is fed into a custom neural network layer that implements the conventional WNOMINATE estimation (cite Poole and Rosenthal and the WNOMINATE package). Specifically, the layer implements the inner portion of model in \ref{eq:wnom}, sepcifically calculating
++ JointWnomTerm layer: The embedded and reshaped data is fed into a custom neural network layer that implements the conventional WNOMINATE estimation (as found in \cite{wnominate}). Specifically, the layer implements the inner portion of model in \ref{eq:wnom}, sepcifically calculating
 \begin{equation} \label{eq:jointwnom}
 \exp\left(-\frac{1}{2}\sum_{k=1}^s w_k^2 d_{ijyk}^2 \right) - \exp\left({-\frac{1}{2}\sum_{k=1}^s w_k^2 d_{ijnk}^2 }\right)
 \end{equation}
 where $K$ is the number of dimensions in the model, $w_k$ is the salience weight for dimension $k$, and $d_{iyk}^2$ is the distance between a legislator's ideal point and the yes point of the bill and $d_{ink}^2$ is the distance between the legislator's ideal point and the no point of the bill.[^10]
 
-+ Dropout layer: Dropout regularization, as proposed by \cite{dropout}, has become an extremely common way of limiting model overfitting, often with the additional benefit of improved behavior during model training. Dropout layers set model weights to 0 at random during iterations of the training process. This prevents any single weight dominating the prediction of the algorithm. In this specific instance, the dropout layer sets the salience weight for any given ideology dimension to 0 for a specific iteration of the optimzation algorithm relying upon the other dimensions to make a vote prediction.  In practice, this has resulted in better model performance in terms of observable metrics and by limiting overfitting during the training process..
++ Dropout layer: Dropout regularization, as proposed by \cite{dropout}, has become an extremely common way of limiting model overfitting, often with the additional benefit of improved behavior during model training. Dropout layers set model weights to 0 at random during iterations of the training process. This prevents any single weight dominating the prediction of the algorithm. In this specific instance, the dropout layer sets the salience weight for any given ideology dimension to 0 for a specific iteration of the optimzation algorithm relying upon the other dimensions to make a vote prediction.  In practice, this has resulted in better model performance in terms of observable metrics and by limiting overfitting during the training process.
 
 + Dense layer: The quantity obtained in the JointWnomLayer is then used as an input to a Dense layer, parameterised as a logistic regression (i.e. sigmoid activation and binary_crossentropy loss). The single model weight estimated here is denoted $\beta$ in most NOMINATE models and represents the signal to noise ratio.  A high value corresponds to votes being largely deterministic, a lower value suggest more randomness.
 
-# The neural network implementation works
+The data is given as a batch of triples, $(legislator\_id, bill\_id, vote)$. The identifiers are fed into the input layers and subsequently into the embeddings to generate the predictive parameters of the network. The vote itself is used as the outcome value of the final model layer (the logistic parameterized Dense layer).
 
-We demonstrate that the neural network implementation works at least as well as existing methods through two simple tests. The first is to test the model on synthetic data, generated with known parameters, and determine how well the method recovers these known values. The second is to check that the results match the commonly used implementations of WNOMINATE \citep{wnominate} and item response \citep{pscl} ideal points.
+# The Neural Network Implementation Works
 
-## Recovering known ideal points
+We demonstrate that the neural network implementation works at least as well as existing methods through two simple tests. The first is to test the model on synthetic data, generated with known parameters, and determine how well the method recovers these known values. The second is to check that the results match the commonly used implementations of W-NOMINATE \citep{wnominate} and item response \citep{pscl} ideal points.
+
+## Recovering Known Ideal Points
 
 The synthetic data is generated to have 3 known dimensions, where the random predictions are generated in the NOMINATE parameterization. To guard against overfitting to specific votes a legislator took, we train the model on a subset of the data and test it on 20\% of votes as a held out set. This means that a legislator's ideal point is determined only by the votes in the training sample and that a bill's paramters are determined only by the subset of legislators included who voted on this bill.
 
-There are two primary benefits to using a held out sample. First, relying on an out of sample evaluation set is often used to determine when a neural network has converged while estimating a model. There is little point in continuing to optimize a model where out of sample performance has plateaued and doing so usually results in overfitting. Second, performance on a held out sample can be used to make additional decisions about the model structure, including parameterization choices or for evaluating distributional assumptions. For example, how does making the ideal points dynamic affect the model performance? What is the optimal number of ideal point dimensions? An additional dimension may offer an improvement in out of sample prediction, but it almost always increases in sample performance. The decision to add a dimension has always been somewhat arbitrary, an out of sample performance test provides an objective metric to evaluate.[^5] 
+There are two primary benefits to using a held out sample. First, relying on an out of sample evaluation set is often used to determine when a neural network has converged while estimating a model. There is little point in continuing to optimize a model where out of sample performance has plateaued and doing so usually results in overfitting. 
 
-[^5]: It is not as simple as saying that "the model that fits best on test data" is the right answer. In some cases it is preferable to say, this is the first model that attains a near minimum.
+Second, performance on a held out sample can be used to make additional decisions about the model structure, including parameterization choices or for evaluating distributional assumptions.[^13] For example, how does making the ideal points dynamic affect the model performance? What is the optimal number of ideal point dimensions? An additional dimension may offer an improvement in out of sample prediction, but it almost always increases in sample performance. An out of sample performance test provides an objective metric to determine the optimal number of dimensions to include.[^5] If a practitioner finds it undesirable to omit votes in this fashion, the model could then be refit on the entire dataset using the model setup that performed best on the test data.
+
+[^13]: A recent paper by \cite{{marble2017much} uses a held out set to discuss the predictive power of ideal points in survey data, and in doing so estimate ideal points on Senate votes from the 111th-114th congress using a heldout set and cross-validation. To our knowledge, there have not been other attempts to use this out of sample validation strategy more broadly.
+
+[^5]: It is not as simple as saying that "the model that fits best on test data" is the right answer. In some cases it is preferable to say that this is the first model that attains a near minimum.
 
 
 ```{r echo=FALSE, out.width='100%', fig.cap="\\label{fig:testmetrics}Performance metrics on Synthetic Data", fig.align='center'}
 knitr::include_graphics('test_metrics.png')
 ```
 
-Figure \ref{fig:testmetrics} shows the model performance of NN-NOMINATE on synthetic data, varying the number of dimensions in the model. We evaluate two metrics, accuracy (whether or not the vote was predicted correctly) and log-loss (a common metric used in classification problems). Log-loss is useful because it provides an idea of how good the probability estimates of a model are, and penalizes over-confident predictions. We see that the log-loss decreases rapidly is minimized at the optimal number of dimensions on the test data, and the test log-loss begins to increase even as in sample . Training accuracy shows similar patterns, attaining best performance on the known optimal number of dimensions.
+Figure \ref{fig:testmetrics} shows the model performance of NN-NOMINATE on synthetic data, varying the number of dimensions in the model. We evaluate two metrics, accuracy (whether or not the vote was predicted correctly) and log-loss (a common metric used in classification problems). Log-loss is useful because it provides an idea of how good the probability estimates of a model are, and penalizes over-confident predictions. We see that the log-loss decreases rapidly and is minimized at the optimal number of dimensions on the test data, following which the test log-loss begins to increase. Training accuracy shows similar patterns, attaining best performance on the known optimal number of dimensions.
 
+```{r echo=FALSE, out.width='100%', fig.cap="\\label{fig:nntrueplot}NN-NOMINATE and \"True\" ideal point comparison", fig.align='center'}
+knitr::include_graphics('nn_true_plot.png')
+```
 
-## Comparison to existing pacakges
+Additionally, Figure \ref{fig:nntrueplot} shows evidence that NN-NOMINATE obtains plausible estimates of the ideal point parameters in the proper three dimensions. It is important to note that the synthetic data was generated with the first dimension having a higher salience weight than the other two, which accounts for why the first dimension is more precisely correlated. Also, because the model was only fit on 80% of the data in training, some imprecision is expected. An equivalent chart on the full dataset yields more precise estimates.
 
-```{r echo=FALSE, out.width='100%', fig.cap="\\label{fig:testmetricswnom}Performance metrics on Synthetic Data", fig.align='center'}
+```{r echo=FALSE, out.width='100%', fig.cap="\\label{fig:testmetricswnom}Performance metrics on Synthetic Data with WONOMINATE", fig.align='center'}
 knitr::include_graphics('test_metrics_with_wnom.png')
 ```
 
-Since is has not yet been common to estimate ideal point models on a training and test set we verify that the model works by comparing the results of NNNOMINATE to the WNOMINATE package available in R. The results for the synthetic data are shown in Figure \ref{fig:testmetricswnom}, where WNOMINATE shows similar patterns over training and test data. It appears that for the synthetic dataset at least, NN-NOMINATE (slightly) outperforms the commonly used WNOMINATE package attaining lower log loss and higher accuracy on test data.
+Since is has not yet been common to estimate ideal point models on a training and test set, we verify that the model works by comparing the results of NN-NOMINATE to the WNOMINATE package available in R. The results for the synthetic data are shown in Figure \ref{fig:testmetricswnom}, where WNOMINATE shows similar patterns over training and test data. It appears that for the synthetic dataset at least, NN-NOMINATE (slightly) outperforms the commonly used WNOMINATE package attaining lower log loss and higher accuracy on test data.
 
-We can also use simple correlations between the estimated ideal points to make sure that the ideal point space is similar across estimation methods. These results are shown in Figure \ref{fig:idealcorr} Since ideal points are not independently identified, including up to dimension switching and other problems, there are some important caveats.  First, it is often the case that NN-NOMINATE results in ideal points that are smaller in maginitude on average than the WNOMINATE package and second, dimension labels can switch across the two different methods.[^7]  
+## Comparisons on real data
 
-```{r echo=FALSE, out.width='100%', fig.cap="\\label{fig:testmetricswnom}Performance metrics on Synthetic Data", fig.align='center'}
-knitr::include_graphics('test_metrics_with_wnom.png')
+In Figure \ref{fig:votesmetrics}, we show the same model evaluation metrics on real world data from the 110th-115th US Senate, which is roughly the same size as the synthetic test set. In this case there seems to be little evidence that there exists more than one dimension in the test data, as both NN-NOMINATE and WNOMINATE achieve minimum at the beginning (prior to NN-NOMINATE beginning to slightly overfit as the number of dimensions goes above 4).
+
+```{r echo=FALSE, out.width='100%', fig.cap="\\label{fig:votesmetrics}Model metrics on 110th-115th Senate", fig.align='center'}
+knitr::include_graphics('votes_metrics_with_wnom.png')
 ```
 
-[^7]: Indeed labels often switch across runs of the same model. The exception for NN-NOMINATE, which because of initialization choices (we impose initial values for Republicans in the sample on ther right and Democrats on the left), almost always results in the first dimension being the most dimesion most strongly related to party. Note that the predictive results do not depend on this initialization choice, and that it is merely selected for convenience.
+<!-- In addition to similar performance metrics, the results of the two methods are strongly correlated (GRIB: make this pairplot once the votes are finished running). -->
 
-## Real vote data
+We can also use simple correlations between the estimated ideal points to make sure that the ideal point space is similar across estimation methods. These results are shown in Figure \ref{fig:idealcorr} Since ideal points are not independently identified, including up to dimension switching and other problems, there are some important caveats.  First, it is often the case that NN-NOMINATE results in ideal points that are smaller in maginitude on average than the WNOMINATE package and second, dimension labels can switch across the two different methods.[^12]  
 
-In Table XX, we show the same metrics on real world data from the 110th-115th US Senate. In addition to similar performance metrics, the results of the two methods are strongly correlated.
-
-```{r echo=FALSE, out.width='75%', fig.cap="\\label{fig:votesmetrics}Log-loss on 110th-115th Senate", fig.align='center'}
-knitr::include_graphics('votes_metrics.png')
+```{r echo=FALSE, out.width='75%', fig.cap="\\label{fig:votescompplot}NN-NOMINATE and WNOMINATE estimates comparison on 110th-115th Senates", fig.align='center'}
+knitr::include_graphics('votes_comp_plot.png')
 ```
+
+[^12]: Indeed labels often switch across runs of the same model. The exception for NN-NOMINATE, which because of initialization choices (we impose initial values for Republicans in the sample on ther right and Democrats on the left), almost always results in the first dimension being the most dimesion most strongly related to party. Note that the predictive results do not depend on this initialization choice, and that it is merely selected for convenience.
 
 # Results and applications
 
-While it is comforting to know that a new optimization of an existing model returns similar results, NN-NOMINATE is capable of more than the existing implementations. The first is large scale ideal point estimation, for example fitting models on the entire history of the US Congress locally on a laptop.  The second is to demonstrate the extensibility of the framework, where the model can be extended very simply to include covariates as well as more complicated representations of a bill than existing representations.
+While it is comforting to know that a new implementation of an existing model returns similar results, NN-NOMINATE is capable of more than the existing implementations. The first is large scale ideal point estimation, for example fitting models on the entire history of the US Congress locally on a laptop.  The second is to demonstrate the extensibility of the framework, where the model can be extended very simply to include covariates as well as more complicated representations of a bill than existing representations.
 
-##
+## Large scale implementation
 
-We examine two large datasets, all of which can be fitted locally on a 3 year old mac laptop in less than an hour.[^7] The first is simply the entire history of US rollcalls. The dimension tradeoff calculation from above is shown in Figure XX, which shows that the optimal number of dimensions is at least 8 over this entire dataset.
+We examine two large datasets, all of which can be fitted easily on most common computers.[^7] The first is simply the entire history of US rollcalls. The dimension tradeoff calculation from above is shown in Figure \ref{fig:fullvotesmetrics}, which shows that the optimal number of dimensions is at least 8 over this entire dataset.
 
-[^7]: Formal performance comparisions to existing methods is forthcoming. Note that in the case of the WNOMINATE and pscl packages, performance comparisons are impossible because they require computaiton of a roll call matrix that is nXm which is more than can easily fit in memory (assuming integer values for all votes this still takes up more than XXGB).]
+[^7]: Neural networks have reputations as require lots of processing power, including the use of graphics cards. However, for a straightforward model like this, such processing power is not necessary. Formal performance comparisions to existing methods is forthcoming.
+<!-- Note that in the case of the WNOMINATE and pscl packages, performance comparisons are impossible because they require computaiton of a roll call matrix that is IxJ which is more than can easily fit in memory (assuming integer values for all votes this still takes up more than XXGB). -->
 
-The second dataset is the set of all cosponsorship decisions from the 93rd-114th US Congresses, a task that was also attempted in (cite that earlier paper). While that work hypothesized that cosponsorship would show fewer dimesions than voting, we believe that it is also plausible that there should be more. Since so many voting decisions include strategic concerns, cosponsorhip, a potentially less impactful choice, could allow legislators to espouse a wider variety of policy opinions (and thus require additional dimensions in the modeling process).
+```{r echo=FALSE, out.width='100%', fig.cap="\\label{fig:fullvotesmetrics}Metrics on Ideal-Points from the 1st-115th Congresses", fig.align='center'}
+knitr::include_graphics("full_votes_metrics.png")
+```
 
-In this case, a "yes" vote is considered to be sponsoring or cosponsoring a bill, whereas everyone who did not is assumed (at least by opportunity cost) to be a "no". Note that this data is much noiser than votes. Since so many bills are introduced that do not proceed in a given session, there are likely many cases where a legislator would have preferred that a bill pass even if they did not have the opportunity to copsonsor it. Because of this, we add additional dropout layers on the bill parameters themselves. This limits the extent to which the model can overfit to noise in the dataset, although the results in Table XX show that this is only somewhat successful as the training accuracy somewhat rapidly reaches 1.
+```{r echo=FALSE, out.width='100%', fig.cap="\\label{fig:fullvotesmetrics}Metrics on Cosponsorship 93rd-115th Congresses", fig.align='center'}
+knitr::include_graphics("full_cosponsor_metrics.png")
+```
 
-While the above results could be construed as evidence, as was the assertion made (in that other paper), that there are fewer dimensions in cosponsoring decisions than there are in voting it seems equally plausible that the model is more easily fitting to noise in the cosponsorship decisions so rapidly that the true policy preference dimensions.
+The second dataset is the set of all cosponsorship decisions from the 93rd-114th US Congresses. This ideal at least goes back to \cite{talbert2002setting}[^14], who find that there are more dimensions in cosponsorship decisions than in voting. Since so many voting decisions include strategic concerns, cosponsorhip, a potentially less impactful choice, could allow legislators to espouse a wider variety of policy opinions (and thus require additional dimensions in the modeling process).
 
+[^14]: See also \cite{aleman2009comparing}.
 
-##
+In this case, a "yes" vote is considered to be sponsoring or cosponsoring a bill, whereas everyone who did not is assumed (at least by opportunity cost) to be a "no". Note that this data is much noiser than votes. Since so many bills are introduced that do not proceed in a given session, there are likely many cases where a legislator would have preferred that a bill pass even if they did not have the opportunity to copsonsor it. Because of this, we add additional dropout layers on the bill parameters themselves. This limits the extent to which the model can overfit to noise in the dataset, although the results in \ref{fig:fullvotesmetrics} show that this is only somewhat successful as the training accuracy somewhat rapidly reaches 1.
 
-We also extend the model to include a simple covariate. It is plausible that a legislator might behave differently while in the party that controls the chamber. One way this might be observerd is that a legislator in the party in power is more likely to vote yes, on average, than someone in the minority party. This could even be the case when the match with their ideal point is very close, but due to party pressure a legislator could deviate from this to some extent. As such we estimate the models from the previous section including a variable indicating that a legislator is in the party in power so that the logistic layer now becomes:
+While the above results could be construed as evidence, that there are fewer dimensions in cosponsoring decisions than there are in voting it seems equally plausible that the model is more easily fitting to noise in the cosponsorship decisions so rapidly that the true policy preference dimensions.
+
+## Including covariates
+
+We also extend the model to include covariates. As an exmaple, it is plausible that a legislator might behave differently while in the party that controls the chamber. One way this might be observerd is that a legislator in the party in power is more likely to vote yes, on average, than someone in the minority party. This could even be the case when the match with their ideal point is very close, but due to party pressure a legislator could deviate from this to some extent. As such we estimate the models from the previous section including a variable indicating that a legislator is in the party in power so that the logistic layer now becomes:
 \begin{equation}
 prob(vote=yea) = \Phi\left(\beta \left[\exp\left(-\frac{1}{2}\sum_{k=1}^s w_k^2 d_{iyk}^2 \right) - \exp\left({-\frac{1}{2}\sum_{k=1}^s w_k^2 d_{ink}^2 }\right)\right] + \gamma * pip_{ik}\right)
 \end{equation}
 where $\gamma$ represents the effect of being in the party in power. The results show that this factor is positive, as expected, but that the magnitude represents only a very small difference in vote probability. Note that the NN-Nominate framework does not easily lend itself to hypothesis testing. One way to achieve this would be a parametric bootstrap (ala Poole and Rosenthal) but this has not been attempted.[^8]
 
-[^8]: Blei paper about neural networks as Bayesian inference.
+[^8]: One intriguing path forward is suggested by \cite{mandt2017stochastic} who show that under certain conditions stochastic gradient decent (as is used in neural networks) can proxy for Bayesian inference.
 
-Additionally, while a discussion of using a text representation of a bill, rather than a simple indicator value, is beyond the scope of this work this is a prime area of current research (see e.g. Kornilova). These models work by building embedding representations of the bills themselves and then determining legislators ideal points relative to this more robust representation of a bill. While the accuracy of these models does not yet match that of the bill indicator approach, these models have the strong advantage of allowing out of sample prediction on new bill text. This means that we can determine how a legislator would vote on new bills, as they are introduced (for more we refer you to the Kornilova paper).
+Additionally, while a discussion of using a text representation of a bill, rather than a simple indicator value, is beyond the scope of this work this is a prime area of current research (for example see \cite{kornilova2018party}). These models work by building embedding representations of the bills themselves and then determining legislators ideal points relative to this more robust representation of a bill. While the accuracy of these models does not yet match that of the bill indicator approach, these models have the strong advantage of allowing out of sample prediction on new bill text. This means that we can determine how a legislator would vote on new bills, as they are introduced (for more we refer you to the \cite{Kornilova}).
 
 # Conclusion
 
-1. I implemented DW-NOMINATE as a neural network
-    - Why? Because I could! But also because it's a nice platform for this kind of optimization.
-    - It scales much better than existing implementations
-    - It's extensible in very interesting ways
-2. All ideal point models are (a bit) overfit.
-    - At some point the algorithm starts to make marginal improvements to the parameters that don't improve out of sample performance
-    - Out of sample performance matters much more than in sample (e.g. if we only cared about in sample we'd just add dimensions until we cam predict it perfectly)
-    - Out of sample performance is a useful metric for evaluating modeling choices (adding another dimension, adding a time component, adding an external variable)
+We have shown that ideal point estimation is a natural fit for a neural networks and that we can replicate existing parameterizations using this new system. However, we feel that this is only scratching the surface of their potential. We believe that extending this framework, both with ideas mentioned above and others, will yield new and important insights into the legislative process.
 
-this is inline `r py$answer` and 
+<!-- 1. I implemented DW-NOMINATE as a neural network -->
+<!--     - Why? Because I could! But also because it's a nice platform for this kind of optimization. -->
+<!--     - It scales much better than existing implementations -->
+<!--     - It's extensible in very interesting ways -->
+<!-- 2. All ideal point models are (a bit) overfit. -->
+<!--     - At some point the algorithm starts to make marginal improvements to the parameters that don't improve out of sample performance -->
+<!--     - Out of sample performance matters much more than in sample (e.g. if we only cared about in sample we'd just add dimensions until we cam predict it perfectly) -->
+<!--     - Out of sample performance is a useful metric for evaluating modeling choices (adding another dimension, adding a time component, adding an external variable) -->
 
-```{r}
-py$answer
-```
+<!-- this is inline `r py$answer` and  -->
+
+<!-- ```{r} -->
+<!-- py$answer -->
+<!-- ``` -->
 
 
-1. How to implement in a neural network
-    a. Discuss both parameterizations
-    b. Show convergence plots
-    c. Discuss out of sample fit as the metrics of importance
-2. A Neural Network implementation works
-    a. It estimates correctly on synthetic data (accuracy tables for both of these)
-    b. It matches results from standard libraries (wnominate and pscl) on both synthetic and real data
-        i. Show both in sample and out of sample accuracy (will require writing a python wrapper to get predictions from the R results)
-3. Results and applications of the neural network implementation
-    a. What are the optimal number of dimensions? Plot these and discuss tradeoffs
-    b. Applying the model to cosponsorship
-    c. Polarization differences
-        i. Votes models over time (how to do in multiple dimensions?)
-        ii. Compare between cosponsorship and votes
+<!-- 1. How to implement in a neural network -->
+<!--     a. Discuss both parameterizations -->
+<!--     b. Show convergence plots -->
+<!--     c. Discuss out of sample fit as the metrics of importance -->
+<!-- 2. A Neural Network implementation works -->
+<!--     a. It estimates correctly on synthetic data (accuracy tables for both of these) -->
+<!--     b. It matches results from standard libraries (wnominate and pscl) on both synthetic and real data -->
+<!--         i. Show both in sample and out of sample accuracy (will require writing a python wrapper to get predictions from the R results) -->
+<!-- 3. Results and applications of the neural network implementation -->
+<!--     a. What are the optimal number of dimensions? Plot these and discuss tradeoffs -->
+<!--     b. Applying the model to cosponsorship -->
+<!--     c. Polarization differences -->
+<!--         i. Votes models over time (how to do in multiple dimensions?) -->
+<!--         ii. Compare between cosponsorship and votes -->
 
-Dropout in two places: 1. Each dimension to ensure fitting even if first dimensions dominates. 2. On bill embeddings (to not overfit to a specific bill). Why not on legislators? The structure of the dynamic part of the model doesn't allow this easily.
+<!-- Dropout in two places: 1. Each dimension to ensure fitting even if first dimensions dominates. 2. On bill embeddings (to not overfit to a specific bill). Why not on legislators? The structure of the dynamic part of the model doesn't allow this easily. -->
+
+<!-- TODO: Rerun votes models with the processing -->
+<!-- TODO: Run copsonsor with time component (no additional processing!) -->
+
+<!-- XXXXLisa thinks you should move this paragraph somewhere else. We implement ideal point models in a neural network framework because it is easily extensible and transparent.  Our results suggest that the two dimensional model relied on sacrifices explanatory power in voting decisions. -->

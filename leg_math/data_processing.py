@@ -39,7 +39,8 @@ def drop_unanimous(vote_df,
 
 
 def process_data(data_type="test", congress_cutoff=0, k_dim=1, k_time=0,
-                 return_vote_df=False, validation_split=0.2, covariates_list=[]):
+                 return_vote_df=False, validation_split=0.2, covariates_list=[],
+                 unanimity_check=True):
     '''Process a dataframe of votes into the format expected by the model
 
     # Arguments:
@@ -140,15 +141,18 @@ def process_data(data_type="test", congress_cutoff=0, k_dim=1, k_time=0,
 
     N = len(vote_df_temp)
     key_index = round(0.2 * N)
-    time_passed = [(vote_df_temp["time_passed"] ** i).values for i in range(1, k_time + 1)]
 
     # Keep only votes that are valid in the dataset
     train_data = vote_df_temp.iloc[:(N - key_index), :]
-    train_data = drop_unanimous(train_data, min_vote_count=10, unanimity_percentage=0.025)
+    if unanimity_check:
+        train_data = drop_unanimous(train_data, min_vote_count=10, unanimity_percentage=0.025)
     # Ensure test data only contains valid entries
     test_data = vote_df_temp.iloc[-key_index:, :]
     test_data = test_data[test_data["leg_id"].isin(train_data["leg_id"])]
     test_data = test_data[test_data["vote_id"].isin(train_data["vote_id"])]
+
+    time_passed_train = [(train_data["time_passed"] ** i).values for i in range(1, k_time + 1)]
+    time_passed_test = [(test_data["time_passed"] ** i).values for i in range(1, k_time + 1)]
 
     vote_data = {'J': len(leg_ids),
                  'M': len(vote_ids),
@@ -159,8 +163,8 @@ def process_data(data_type="test", congress_cutoff=0, k_dim=1, k_time=0,
                  'm_test': test_data["vote_id"].values,
                  'y_train': train_data["vote"].astype(int).values,
                  'y_test': test_data["vote"].astype(int).values,
-                 'time_passed_train': [i[:(N - key_index)] for i in time_passed],
-                 'time_passed_test': [i[-key_index:] for i in time_passed],
+                 'time_passed_train': time_passed_train,
+                 'time_passed_test': time_passed_test,
                  'init_embedding': init_embedding,
                  'vote_crosswalk': vote_crosswalk,
                  'leg_crosswalk': leg_crosswalk,
