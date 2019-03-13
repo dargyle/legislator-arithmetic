@@ -110,11 +110,12 @@ def process_data(data_type="test", congress_cutoff=0, k_dim=1, k_time=0,
     if congress_cutoff:
         vote_df = vote_df[vote_df["congress"] >= congress_cutoff]
 
-    first_session = vote_df.groupby("leg_id")[["congress"]].agg(["min", "max"])
-    first_session.columns = ["first_session", "last_session"]
-    # first_session["first_session"].value_counts()
-    vote_df = pd.merge(vote_df, first_session, left_on="leg_id", right_index=True)
-    vote_df["time_passed"] = vote_df["congress"] - vote_df["first_session"]
+    if k_time > 0:
+        first_session = vote_df.groupby("leg_id")[["congress"]].agg(["min", "max"])
+        first_session.columns = ["first_session", "last_session"]
+        # first_session["first_session"].value_counts()
+        vote_df = pd.merge(vote_df, first_session, left_on="leg_id", right_index=True)
+        vote_df["time_passed"] = vote_df["congress"] - vote_df["first_session"]
 
     leg_ids = vote_df["leg_id"].unique()
     vote_ids = vote_df["vote_id"].unique()
@@ -137,17 +138,21 @@ def process_data(data_type="test", congress_cutoff=0, k_dim=1, k_time=0,
 
     init_embedding = vote_df_temp[["leg_id", "init_value"]].drop_duplicates("leg_id").set_index("leg_id").sort_index()
 
+    if "vote_weight" not in vote_df_temp.columns:
+        vote_df_temp["vote_weight"] = 1.0
+
     assert not vote_df_temp.isnull().any().any(), "Missing value in data"
 
     N = len(vote_df_temp)
-    key_index = round(0.2 * N)
+    key_index = round(validation_split * N)
+    print(f"key_index: {key_index}")
 
     # Keep only votes that are valid in the dataset
     train_data = vote_df_temp.iloc[:(N - key_index), :]
     if unanimity_check:
-        train_data = drop_unanimous(train_data, min_vote_count=10, unanimity_percentage=0.025)
+        train_data = drop_unanimous(train_data, min_vote_count=10, unanimity_percentage=0.001)
     # Ensure test data only contains valid entries
-    test_data = vote_df_temp.iloc[-key_index:, :]
+    test_data = vote_df_temp.iloc[(N - key_index):, :]
     test_data = test_data[test_data["leg_id"].isin(train_data["leg_id"])]
     test_data = test_data[test_data["vote_id"].isin(train_data["vote_id"])]
 
@@ -170,6 +175,8 @@ def process_data(data_type="test", congress_cutoff=0, k_dim=1, k_time=0,
                  'leg_crosswalk': leg_crosswalk,
                  'covariates_train': train_data[covariates_list].values,
                  'covariates_test': test_data[covariates_list].values,
+                 'vote_weight_train': train_data["vote_weight"].values,
+                 'vote_weight_test': test_data["vote_weight"].values,
                  }
 
     # Export a pscl rollcall type object of the training data
@@ -188,7 +195,7 @@ def process_data(data_type="test", congress_cutoff=0, k_dim=1, k_time=0,
 
     vote_data['init_embedding'] = init_leg_embedding_final
 
-    # TODO: Refactor do ditch the dual return
+    # TODO: Refactor to ditch the dual return
     if return_vote_df:
         return vote_data, vote_df
     else:

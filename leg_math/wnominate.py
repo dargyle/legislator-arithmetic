@@ -16,10 +16,10 @@ from leg_math.data_processing import process_data
 DATA_PATH = os.path.expanduser("~/data/leg_math/")
 
 
-for i in range(1, 11):
+for i in range(5, 6):
     data_params = dict(
                    data_type="votes",
-                   congress_cutoff=110,
+                   congress_cutoff=0,
                    k_dim=i,
                    k_time=0,
                    covariates_list=[],

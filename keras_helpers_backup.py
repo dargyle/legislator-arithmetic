@@ -192,6 +192,7 @@ class TimestepDropout(Dropout):
         return noise_shape
 
 
+
 class UnitMetric(Constraint):
     """UnitMetric weight constraint.
     Constrains the weights incident to each hidden unit
@@ -296,7 +297,6 @@ class JointWnomTerm(Layer):
 
     def get_config(self):
             config = {
-                'output_dim': self.output_dim,
                 # 'units': self.units,
                 # 'activation': activations.serialize(self.activation),
                 # 'use_bias': self.use_bias,
@@ -366,7 +366,6 @@ def NNnominate(n_leg, n_votes,
                combined_dropout=0.0,
                dropout_type="timestep",
                covariates_list=[],
-               k_out=1,
                ):
     """A function to build a dwnominate style neural network
 
@@ -416,7 +415,7 @@ def NNnominate(n_leg, n_votes,
                              # embeddings_constraint=unit_norm(axis=1),
                              # embeddings_constraint=UnitSphere(),
                              # embeddings_constraint=UnitMetric(axis=1),
-                             embeddings_constraint=MinMaxNorm(min_value=0.0, max_value=1.0, axis=1, rate=1.0),
+                             # embeddings_constraint=MinMaxNorm(min_value=0.0, max_value=1.0, axis=1, rate=1.0),
                              weights=[init_leg_embedding.values],
                              )(leg_input)
     # Dropout regularization of the ideal points
@@ -488,131 +487,7 @@ def NNnominate(n_leg, n_votes,
         combined = Concatenate()([combined, covariates])
 
     # Final output, a simple logistic layer
-    main_output = Dense(k_out, activation="sigmoid", name="main_output", use_bias=False, kernel_initializer=Constant(1))(combined)
-
-    # Define model, depending on existence of covariates and time elements
-    if covariates_list:
-        if k_time > 0:
-            model = Model(inputs=[leg_input, bill_input] + time_input_list + [covariates], outputs=[main_output])
-        else:
-            model = Model(inputs=[leg_input, bill_input] + [covariates], outputs=[main_output])
-    else:
-        if k_time > 0:
-            model = Model(inputs=[leg_input, bill_input] + time_input_list, outputs=[main_output])
-        else:
-            model = Model(inputs=[leg_input, bill_input], outputs=[main_output])
-    return model
-
-
-def NNitemresponse(n_leg, n_votes,
-                   k_dim=2,
-                   k_time=0,
-                   init_leg_embedding=None,
-                   ideal_dropout=0.0,
-                   polarity_dropout=0.0,
-                   use_popularity=True,
-                   popularity_dropout=0.0,
-                   combined_dropout=0.0,
-                   dropout_type="timestep",
-                   covariates_list=[],
-                   k_out=1,
-                   batch_normalize=False,
-                   ):
-    """A function to build a dwnominate style neural network
-
-    # Arguments:
-        n_leg (int): the number of legislators in the model
-        n_votes (int): the number of votes in the model
-        k_dim (int): the number of dimensions in the model
-        k_time (int), EXPERIMENTAL: the number of time dimensions in the model,
-            if k_time > 1 a legislator's ideal point at time t is implemented as
-            a polynomial function of degree k_time. Note that the current
-            implementation may result in unexpected behavior (e.g. an ideal
-            point outside the unit sphere)
-        init_leg_embedding (pd.Dataframe): initial values for the legislator
-            embeddings of shape n_leg x k_dim
-        ideal_dropout (float): ideal point dropout rate
-        polarity_dropout (float): polarity dropout rate
-        use_popularity (bool): include a popularity bill parameter
-        popularity_dropout (float): popularity dropout rate
-        dropout_type (str): if timestep, an entire bill/legislator will be
-            dropped at random, otherwise, a constant fraction of all weights
-            will be dropped
-        covariates_list (list), EXPERIMENTAL: a list of covariate names to
-            initialize addition of covariates to the model
-    # Returns:
-        A keras model ready for compilation and fit
-    """
-    # Set up inputs for embedding layers, lists of integer ids
-    leg_input = Input(shape=(1, ), dtype="int32", name="leg_input")
-    bill_input = Input(shape=(1, ), dtype="int32", name="bill_input")
-
-    # If initial weights are not provided, set at random
-    if init_leg_embedding.empty:
-        init_leg_embedding = pd.DataFrame(np.random.uniform(-1, 1, size=(n_leg, k_dim)))
-
-    # Set up the ideal points embedding layer
-    # OrthReg ensures that the dimensions of the ideal point vector are uncorrelated
-    # MinMaxNorm ensures that all ideal points lie within the unit sphere; note that
-    # this is not the same as ensuring that any ideal points reach the edge of the
-    # unit sphere which is a slight difference from the conventional results.
-    ideal_points = Embedding(input_dim=n_leg, output_dim=k_dim, input_length=1, name="ideal_points",
-                             # embeddings_initializer=TruncatedNormal(mean=0.0, stddev=0.05, seed=None),
-                             embeddings_regularizer=OrthReg(1e-1),
-                             # activity_regularizer=regularizers.l2(1e-6),
-                             # embeddings_regularizer=UnitSphere(1e-1),
-                             # embeddings_regularizer=regularizers.l2(1e-5),
-                             # embeddings_constraint=unit_norm(axis=1),
-                             # embeddings_constraint=UnitSphere(),
-                             # embeddings_constraint=UnitMetric(axis=1),
-                             # embeddings_constraint=MinMaxNorm(min_value=0.0, max_value=3.0, axis=1, rate=1.0),
-                             weights=[init_leg_embedding.values],
-                             )(leg_input)
-    # Dropout regularization of the ideal points
-    if ideal_dropout > 0.0:
-        if dropout_type == "timestep":
-            ideal_points = TimestepDropout(ideal_dropout)(ideal_points)
-        else:
-            ideal_points = Dropout(ideal_dropout)(ideal_points)
-
-    if batch_normalize:
-        main_ideal_points = BatchNormalization(name="norm_ideal_points")(ideal_points)
-    else:
-        main_ideal_points = ideal_points
-
-    # Reshape to drop unecessary dimensions left from embeddings
-    flat_ideal_points = Reshape((k_dim,))(main_ideal_points)
-
-    polarity = Embedding(input_dim=n_votes, output_dim=k_dim, input_length=1, name="polarity",
-                         embeddings_initializer=TruncatedNormal(mean=0.0, stddev=0.05, seed=None))(bill_input)
-    if polarity_dropout > 0.0:
-        polarity = Dropout(polarity_dropout)(polarity)
-    flat_polarity = Reshape((k_dim,))(polarity)
-    if use_popularity:
-        popularity = Embedding(input_dim=n_votes, output_dim=1, input_length=1, name="popularity",
-                               embeddings_initializer=TruncatedNormal(mean=0.0, stddev=0.05, seed=None))(bill_input)
-        if popularity_dropout > 0.0:
-            popularity = Dropout(popularity_dropout)(popularity)
-        flat_popularity = Flatten()(popularity)
-        combined_temp = Dot(axes=1)([flat_ideal_points, flat_polarity])
-        combined = Add()([combined_temp, flat_popularity])
-    else:
-        combined = Dot(axes=1)([flat_ideal_points, flat_polarity])
-
-    # Combined dropout regularization
-    # Setting this sets salience weights for a random dimension to 0
-    if combined_dropout > 0:
-        combined = Dropout(combined_dropout)(combined)
-
-    # Include the covariates (if any)
-    if covariates_list:
-        print(covariates_list)
-        covariates = Input(shape=(len(covariates_list), ), name="covariates")
-        combined = Concatenate()([combined, covariates])
-
-    main_output = Dense(1, activation="sigmoid", name="main_output", use_bias=False, kernel_initializer=Constant(1.0), trainable=False)(combined)
-
-    model = Model(inputs=[leg_input, bill_input], outputs=[main_output])
+    main_output = Dense(1, activation="sigmoid", name="main_output", use_bias=False, kernel_initializer=Constant(1))(combined)
 
     # Define model, depending on existence of covariates and time elements
     if covariates_list:

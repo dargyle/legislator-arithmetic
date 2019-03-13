@@ -309,7 +309,7 @@ if polarity_dropout > 0.0:
     polarity = Dropout(polarity_dropout)(polarity)
 flat_polarity = Reshape((k_dim,))(polarity)
 if use_popularity:
-    popularity = Embedding(input_dim=m_items, output_dim=1, input_length=1, name="popularity",
+    popularity = Embedding(input_dim=m_items, output_dim=k_dim, input_length=1, name="popularity",
                            embeddings_initializer=TruncatedNormal(mean=0.0, stddev=0.05, seed=None))(bill_input_drop)
     flat_popularity = Flatten()(popularity)
     combined_temp = Dot(axes=1)([flat_ideal_points, flat_polarity])

@@ -9,7 +9,7 @@ from leg_math.data_processing import process_data
 
 DATA_PATH = os.path.expanduser("~/data/leg_math/")
 
-i = 3
+i = 5
 data_params = dict(
                data_type="votes",
                congress_cutoff=0,
@@ -18,7 +18,7 @@ data_params = dict(
                covariates_list=[],
                )
 # vote_data = process_data(**data_params, return_vote_df=False)
-vote_data, vote_df = process_data(**data_params, return_vote_df=True)
+vote_data, vote_df = process_data(**data_params, return_vote_df=True, unanimity_check=True)
 model_params = {
                 "n_leg": vote_data["J"],
                 "n_votes": vote_data["M"],
@@ -98,8 +98,14 @@ ax.set_ylim([0.0, 3.0])
 
 if data_params["data_type"] == "votes" or data_params["data_type"] == "cosponsor":
     leg_data = pd.read_feather(DATA_PATH + "leg_data.feather")
+
+    first_session = leg_data.groupby("leg_id")[["congress"]].agg(["min", "max"])
+    first_session.columns = ["first_session", "last_session"]
+    # first_session["first_session"].value_counts()
+    leg_data = pd.merge(leg_data, first_session, left_on="leg_id", right_index=True)
+
     col_names = (["leg_id", "state_icpsr", "bioname", "party_code"] +
-                 [f"nominate_dim{i}" for i in range(1, 3)])
+                 [f"nominate_dim{i}" for i in range(1, 3)] + ["first_session", "last_session"])
 
 k_dim = data_params["k_dim"]
 k_time = data_params["k_time"]
@@ -138,7 +144,6 @@ leg_bio_data = leg_data[col_names].drop_duplicates()
 fitted_model.get_layer("main_output").get_weights()[0]
 fitted_model.get_layer("wnom_term").get_weights()[0].round(5)
 (~np.isclose(fitted_model.get_layer("wnom_term").get_weights()[0], 0)).sum()
-
 
 ideal_point_names = ["ideal_{}".format(j) for j in range(1, k_dim + 1)]
 drift_names = ["drift_{}".format(j) for j in range(1, k_time + 1)]
@@ -228,10 +233,11 @@ from pandas.plotting import scatter_matrix
 
 import seaborn as sns
 sns.set(style="ticks")
-sns.pairplot(leg_data_cf[leg_data_cf["party_code"].isin([100, 200])],
-             hue="party_code", palette={100: "blue", 200: "red"},
-             vars=var_list,
-             diag_kind="kde", plot_kws=dict(alpha=0.25), markers=".")
+fig = sns.pairplot(leg_data_cf[leg_data_cf["party_code"].isin([100, 200])],
+                   hue="party_code", palette={100: "blue", 200: "red"},
+                   vars=ideal_point_names,
+                   diag_kind="kde", plot_kws=dict(alpha=0.25), markers=".")
+# fig.savefig("./draft/ideal_scatter.png", bbox_inches='tight')
 
 leg_data_cf[var_list].corr()
 if data_params["data_type"] == "test":
@@ -264,32 +270,32 @@ sns.pairplot(asdf, vars=["midpoint1D", "midpoint2D", "mid1", "mid2"], diag_kind=
 from sklearn.cluster import KMeans
 from sklearn.metrics import silhouette_score
 A = leg_data_cf.set_index("leg_id").filter(regex="ideal")
-inertia = pd.DataFrame()
-for k in range(2, 21, 2):
-    print(k)
-    k_means = KMeans(n_clusters=k)
-    k_means_fit = k_means.fit(A)
-    inertia.loc[k, "inertia"] = k_means_fit.inertia_
-    pred_cluster = k_means_fit.predict(leg_data_cf.set_index("leg_id").filter(regex="ideal"))
-    inertia.loc[k, "silhouette_score"] = silhouette_score(A, pred_cluster)
-inertia["inertia"].plot()
-pd.Series(k_means_fit.predict(leg_data_cf.set_index("leg_id").filter(regex="ideal"))).value_counts()
+# inertia = pd.DataFrame()
+# for k in range(2, 21, 2):
+#     print(k)
+#     k_means = KMeans(n_clusters=k)
+#     k_means_fit = k_means.fit(A)
+#     inertia.loc[k, "inertia"] = k_means_fit.inertia_
+#     pred_cluster = k_means_fit.predict(leg_data_cf.set_index("leg_id").filter(regex="ideal"))
+#     inertia.loc[k, "silhouette_score"] = silhouette_score(A, pred_cluster)
+# inertia["inertia"].plot()
+# pd.Series(k_means_fit.predict(leg_data_cf.set_index("leg_id").filter(regex="ideal"))).value_counts()
 
 
 if data_params["data_type"] == "votes":
-    from sklearn.manifold import TSNE
-    tsne = TSNE()
-    tsne_fit = tsne.fit(A.sample(500))
-
-    tsne_result = pd.DataFrame(tsne.fit_transform(A))
+    # from sklearn.manifold import TSNE
+    # tsne = TSNE()
+    # tsne_fit = tsne.fit(A.sample(500))
+    #
+    # tsne_result = pd.DataFrame(tsne.fit_transform(A))
     k_means = KMeans(n_clusters=6)
     k_means_cluster = k_means.fit_predict(A)
 
-    plot_data = tsne_result.copy()
-    plot_data.columns = ["x", "y"]
-    plot_data["c"] = k_means_cluster
+    # plot_data = tsne_result.copy()
+    # plot_data.columns = ["x", "y"]
+    # plot_data["c"] = k_means_cluster
 
-    plot_data.plot(kind="scatter", x="x", y="y", c="c", colormap="Set1")
+    # plot_data.plot(kind="scatter", x="x", y="y", c="c", colormap="Set1")
 
     leg_data_cf["cluster"] = k_means_cluster
 
@@ -345,7 +351,7 @@ if data_params["data_type"] == "votes":
 
     from sklearn.metrics.pairwise import pairwise_distances
     leg_specific_data = leg_data_cf.copy()
-    leg_specific_data["distance"] = pairwise_distances(leg_data_cf.loc[[6526], ideal_point_names], leg_data_cf[ideal_point_names])[0]
+    leg_specific_data["distance"] = pairwise_distances(leg_data_cf.loc[[47658], ideal_point_names], leg_data_cf[ideal_point_names])[0]
     leg_specific_data.sort_values("distance")
     leg_specific_data[leg_specific_data["last_session"] == 115].sort_values("distance")
 
@@ -354,3 +360,24 @@ if data_params["data_type"] == "votes":
     leg_data_cf["cluster"].value_counts()
     leg_data_cf.groupby(["cluster", "party_code"])["leg_id"].count().loc[4]
     leg_data_cf[(leg_data_cf["cluster"] == 4) & (leg_data_cf["party_code"] == 100)]
+
+
+    leg_data_cf[leg_data_cf["bioname"].str.contains("LEE, Mike")]
+    leg_data_cf[leg_data_cf["bioname"].str.contains("CHAFFETZ")]
+    leg_data_cf[leg_data_cf["bioname"].str.contains("FEINSTEIN")]
+    leg_data_cf[leg_data_cf["bioname"].str.contains("GILLIBRAND")]
+
+    lee = 47158
+    chaffetz = 46478
+    feinstein = 42154
+    gillibrand = 45798
+    temp = (leg_data_cf.loc[[lee], ideal_point_names].values - leg_data_cf.loc[[chaffetz], ideal_point_names].values) + (leg_data_cf.loc[[gillibrand], ideal_point_names].values)
+
+    leg_specific_data["distance"] = pairwise_distances(temp, leg_data_cf[ideal_point_names])[0]
+    leg_specific_data.sort_values("distance")
+    leg_specific_data[leg_specific_data["last_session"] == 115].sort_values("distance")
+
+    dist_mat = pd.DataFrame(cdist(pd.DataFrame(temp).transpose(), embeddings, metric="cosine"),
+                                    index=["temp"],
+                                    columns=embeddings.index)
+    dist_mat.transpose().sort_values("temp")
