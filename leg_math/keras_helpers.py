@@ -584,13 +584,17 @@ def NNitemresponse(n_leg, n_votes,
     flat_ideal_points = Reshape((k_dim,))(main_ideal_points)
 
     polarity = Embedding(input_dim=n_votes, output_dim=k_dim, input_length=1, name="polarity",
-                         embeddings_initializer=TruncatedNormal(mean=0.0, stddev=0.05, seed=None))(bill_input)
+                         embeddings_constraint=MinMaxNorm(min_value=0.0, max_value=3.0, axis=1, rate=1.0),
+                         # embeddings_initializer=TruncatedNormal(mean=0.0, stddev=0.05, seed=None),
+                         )(bill_input)
     if polarity_dropout > 0.0:
         polarity = Dropout(polarity_dropout)(polarity)
     flat_polarity = Reshape((k_dim,))(polarity)
     if use_popularity:
         popularity = Embedding(input_dim=n_votes, output_dim=1, input_length=1, name="popularity",
-                               embeddings_initializer=TruncatedNormal(mean=0.0, stddev=0.05, seed=None))(bill_input)
+                               embeddings_constraint=MinMaxNorm(min_value=0.0, max_value=3.0, axis=1, rate=1.0),
+                               # embeddings_initializer=TruncatedNormal(mean=0.0, stddev=0.05, seed=None),
+                               )(bill_input)
         if popularity_dropout > 0.0:
             popularity = Dropout(popularity_dropout)(popularity)
         flat_popularity = Flatten()(popularity)
