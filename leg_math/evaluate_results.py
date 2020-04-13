@@ -11,7 +11,7 @@ DATA_PATH = os.path.expanduser("~/data/leg_math/")
 
 i = 5
 data_params = dict(
-               data_type="votes",
+               data_type="test",
                congress_cutoff=0,
                k_dim=i,
                k_time=0,

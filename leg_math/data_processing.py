@@ -54,7 +54,7 @@ def process_data(data_type="test", congress_cutoff=0, k_dim=1, k_time=0,
         validation_split (float): percentage of the data to keep in the validation set
         covariates_list (list), EXPERIMENTAL: a list of covariate names to
             initialize addition of covariates to the model
-    # Returns
+    # Returns:
         vote_data (dict): a dictionary containing all the data necessary to fit
             the model
         OPTIONAL: vote_df: a pandas dataframe of the votes

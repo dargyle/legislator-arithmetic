@@ -6,7 +6,7 @@ import pickle
 
 import warnings
 
-from keras.layers import Embedding, Reshape, Merge, Dropout, SpatialDropout1D, Dense, Flatten, Input, Dot, LSTM, Add, Subtract, Conv1D, MaxPooling1D, Concatenate, Multiply, BatchNormalization, Lambda, Activation, InputSpec
+from keras.layers import Embedding, Reshape, Dropout, SpatialDropout1D, Dense, Flatten, Input, Dot, LSTM, Add, Subtract, Conv1D, MaxPooling1D, Concatenate, Multiply, BatchNormalization, Lambda, Activation, InputSpec
 from keras.models import Sequential, Model
 from keras.initializers import TruncatedNormal
 from keras import regularizers
@@ -17,7 +17,8 @@ from keras.engine.topology import Layer
 from keras.initializers import Constant
 from keras import optimizers
 from keras.utils.generic_utils import get_custom_objects
-from keras.layers import constraints
+# from keras.layers import constraints
+from keras import constraints
 
 from keras.models import load_model
 
@@ -25,6 +26,11 @@ from IPython.display import SVG
 from keras.utils.vis_utils import model_to_dot
 
 from keras import backend as K
+
+import tensorflow as tf
+import tensorflow.keras.backend as B
+# import tensorflow_hub as hub
+# from tensorflow.python.keras.engine import Layer
 
 
 class GetBest(Callback):
@@ -132,7 +138,7 @@ class OrthReg(Regularizer):
         dsize = K.int_shape(mean_t)[1]
         if dsize > 1:
             cov_t = (K.transpose(xy_t-mean_t) @ (xy_t-mean_t)) / (dsize - 1)
-            cov2_t = K.tf.diag(1 / K.sqrt(K.tf.diag_part(cov_t) + K.epsilon()))
+            cov2_t = tf.linalg.diag(1 / K.sqrt(tf.linalg.diag_part(cov_t) + K.epsilon()))
             cor = cov2_t @ cov_t @ cov2_t
             # Norm of the off diagonal elements
             eye = K.eye(K.int_shape(cor)[0])
@@ -148,7 +154,7 @@ class OrthReg(Regularizer):
         # K.eval(mean_t)
         # cov_t = (K.transpose(xy_t-mean_t) @ (xy_t-mean_t)) / (dsize - 1)
         # K.eval(cov_t)
-        # cov2_t = K.tf.diag(1 / K.sqrt(K.tf.diag_part(cov_t)))
+        # cov2_t = tf.diag(1 / K.sqrt(tf.diag_part(cov_t)))
         # K.eval(cov2_t)
         # cor = cov2_t @ cov_t @ cov2_t
         # K.eval(cor)
@@ -281,12 +287,12 @@ class JointWnomTerm(Layer):
         z2 = tlist[2]
         # self.kernel = K.print_tensor(self.kernel, message="weights are: ")
         # https://stackoverflow.com/questions/47289116/element-wise-multiplication-with-broadcasting-in-keras-custom-layer
-        # temp_sum1 = K.tf.multiply(K.square(x - z1), K.square(self.kernel))
+        # temp_sum1 = tf.multiply(K.square(x - z1), K.square(self.kernel))
         # distances1 = K.sum(temp_sum1, axis=1, keepdims=True)
         distances1 = K.dot(K.square(x - z1), K.transpose(K.square(self.kernel)))
         # distances1 = K.print_tensor(distances1, message="result is: ")
 
-        # temp_sum2 = K.tf.multiply(K.square(x - z2), K.square(self.kernel))
+        # temp_sum2 = tf.multiply(K.square(x - z2), K.square(self.kernel))
         # distances2 = K.sum(temp_sum2, axis=1, keepdims=True)
         distances2 = K.dot(K.square(x - z2), K.transpose(K.square(self.kernel)))
 
@@ -347,7 +353,7 @@ def generate_time_layer(i, n_leg, k_dim, leg_input, time_input):
 def normal_activation(x):
     """Use a standard normal cdf as the activation function
     """
-    dist = K.tf.distributions.Normal(loc=0.0, scale=1.0)
+    dist = tf.distributions.Normal(loc=0.0, scale=1.0)
     get_custom_objects().update({'normal_activation': Activation(normal_activation)})
     return dist.cdf(x)
 
@@ -650,7 +656,7 @@ if __name__ == '__main__':
     K.eval(mean_t)
     cov_t = (K.transpose(xy_t-mean_t) @ (xy_t-mean_t)) / (dsize - 1)
     K.eval(cov_t)
-    cov2_t = K.tf.diag(1 / K.sqrt(K.tf.diag_part(cov_t)))
+    cov2_t = tf.linalg.diag(1 / K.sqrt(tf.linalg.diag_part(cov_t)))
     K.eval(cov2_t)
     cor = cov2_t @ cov_t @ cov2_t
 
