@@ -20,15 +20,22 @@ from IPython.display import SVG
 DATA_PATH = os.path.expanduser("~/data/leg_math/")
 EU_PATH = os.path.expanduser("~/data/eu/")
 
+most_recent_parties = pd.read_pickle(EU_PATH + "most_recent_parties.pkl")
+
 eu_votes = pd.read_pickle(EU_PATH + "eu_votes.pkl")
 vote_df = eu_votes.rename(columns={"voteid": "vote_id"})
 vote_df = vote_df.drop(columns=["name", "obscure_id"])
 vote_df = vote_df.dropna(subset=["mepid"]).copy()
 vote_df["leg_id"] = vote_df["mepid"].astype(int).astype(str)
-vote_df["init_value"] = np.random.normal(size=len(vote_df))
-vote_df["vote"] = vote_df["vote_type"].map({"+": 1, "-": 0, "0": np.nan})
+vote_df["vote"] = vote_df["vote_type"].map({"+": "yes", "-": "no", "0": np.nan})
 vote_df = vote_df.dropna().copy()
 vote_df["vote"] = vote_df["vote"].astype(int)
+
+vote_df = pd.merge(vote_df,
+                   most_recent_parties[["person_id", "init_value"]],
+                   left_on='leg_id',
+                   right_on="person_id",
+                   how='left')
 
 i = 2
 return_vote_df = True
@@ -245,38 +252,27 @@ if data_params["data_type"] == "votes" or data_params["data_type"] == "cosponsor
     var_list = [f"nominate_dim{i}" for i in range(1, 3)] + ideal_point_names + drift_names
 
 cf_ideal_points = pd.DataFrame(model.get_layer("ideal_points").get_weights()[0], columns=ideal_point_names)
+cf_ideal_points["ideal_2"] = cf_ideal_points["ideal_2"] * -1
 cf_ideal_points.index = pd.Series(cf_ideal_points.index).map(vote_data["leg_crosswalk"])
-cf_ideal_points.to_pickled(EU_PATH + 'eu_ideal_points')
+cf_ideal_points.to_pickle(EU_PATH + 'eu_ideal_points.pkl')
+cf_ideal_points.to_csv(EU_PATH + 'eu_ideal_points.csv')
 
 cf_ideal_points["ideal_1"].hist()
 cf_ideal_points["ideal_2"].hist()
 cf_ideal_points.plot(kind="scatter", x='ideal_1', y='ideal_2')
 
-eu_parties = pd.read_pickle(EU_PATH + "most_recent_parties.pkl")
-eu_parties["active"] = (eu_parties["end"].dt.date > pd.datetime.now().date())
-eu_parties["active"] = eu_parties["active"].map({False: "inactive", True: "active"})
-eu_parties["person_id"] = eu_parties["person_id"].astype(str)
+# Flip the axis to align with our common perception
 
-leg_data = pd.merge(eu_parties, cf_ideal_points, left_on="person_id", right_index=True)
-leg_data["party"] = leg_data["groupid"]
+# eu_parties = pd.read_pickle(EU_PATH + "most_recent_parties.pkl")
+# eu_parties["active"] = (eu_parties["end"].dt.date > pd.datetime.now().date())
+# eu_parties["active"] = eu_parties["active"].map({False: "inactive", True: "active"})
+# eu_parties["person_id"] = eu_parties["person_id"].astype(str)
+
+leg_data = pd.merge(most_recent_parties, cf_ideal_points, left_on="person_id", right_index=True)
 leg_data["person_id"].duplicated().any()
 # membership_counts = leg_data["party"].value_counts()
 #
-# leg_data["membership_counts"] = leg_data["party"].map(membership_counts)
-party_map = {"PPE-DE": "PPE",
-             "PSE": "S&D",
-             "ALDE": "RE",
-             "UEN": "CRE",
-             "ECR": "CRE",
-             "ENF": "ID",
-             "ITS": "ID",
-             "EFD": "EFDD",
-             "IND/DEM": "EFDD",
-             "Group of the European United Left - Nordic Green Left": "GUE/NGL",
-             "Renew": "RE"}
-leg_data["party_plot"] = leg_data["party"].map(party_map)
-leg_data["party_plot"] = leg_data["party_plot"].fillna(leg_data["party"])
-leg_data["party_plot"].value_counts()
+
 leg_data.plot(kind="scatter", x='ideal_1', y='ideal_2')
 
 sns.set(rc={'figure.figsize': (8.0, 8.0)})
@@ -294,4 +290,4 @@ hue_map = {'PPE': '#3399FF',
 
 
 g = sns.scatterplot(x="ideal_1", y="ideal_2", hue="party_plot", data=leg_data, palette=hue_map, style="active", style_order=["active", "inactive"], alpha=0.75)
-g.figure.savefig(os.path.expanduser("~/downloads/eu_ideologies.pdf"))
+g.figure.savefig(EU_PATH + "eu_ideologies.pdf")
