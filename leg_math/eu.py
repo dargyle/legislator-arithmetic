@@ -27,7 +27,7 @@ vote_df = eu_votes.rename(columns={"voteid": "vote_id"})
 vote_df = vote_df.drop(columns=["name", "obscure_id"])
 vote_df = vote_df.dropna(subset=["mepid"]).copy()
 vote_df["leg_id"] = vote_df["mepid"].astype(int).astype(str)
-vote_df["vote"] = vote_df["vote_type"].map({"+": "yes", "-": "no", "0": np.nan})
+vote_df["vote"] = vote_df["vote_type"].map({"+": 1, "-": 0, "0": np.nan})
 vote_df = vote_df.dropna().copy()
 vote_df["vote"] = vote_df["vote"].astype(int)
 
