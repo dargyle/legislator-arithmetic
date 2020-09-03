@@ -7,7 +7,7 @@ import pickle
 from leg_math.keras_helpers import NNnominate
 from leg_math.data_processing import process_data
 
-DATA_PATH = os.path.expanduser("~/data/leg_math/")
+from constants import DATA_PATH
 
 i = 1
 dims = range(1, 11)

@@ -1,5 +1,3 @@
-
-import os
 import numpy as np
 import pandas as pd
 
@@ -9,7 +7,9 @@ from zipfile import ZipFile
 
 import igraph
 
-DATA_PATH = os.path.expanduser("~/data/leg_math/") + "cosponsor/"
+from constants import DATA_PATH
+
+COSPONSOR_PATH = DATA_PATH + "cosponsor/"
 
 
 # congress_num = 105
@@ -34,7 +34,7 @@ def get_leg_info():
     current_leg = pd.read_csv("https://theunitedstates.io/congress-legislators/legislators-current.csv")
     historical_leg = pd.read_csv("https://theunitedstates.io/congress-legislators/legislators-historical.csv")
     leg_data = pd.concat([historical_leg, current_leg], ignore_index=True)
-    leg_data.to_feather(DATA_PATH + "/us_github_leg_data.feather")
+    leg_data.to_feather(COSPONSOR_PATH + "/us_github_leg_data.feather")
     return leg_data
 
 
@@ -46,7 +46,6 @@ def get_personalized_pageranks(sponsor_data, chamber_letter='s', n_nays=10, upwe
     n_bill_sponsors = bill_sponsors["thomas_id"].value_counts()
     valid_leg_ids = n_bill_sponsors[n_bill_sponsors > min_bills_sponsored].index.tolist()
     bill_sponsors = bill_sponsors[bill_sponsors["thomas_id"].isin(valid_leg_ids)]
-
 
     if upweight_primary_sponsor:
         # This divides "credit" evenly among sponsors and the set of copsonsors
@@ -116,9 +115,9 @@ def get_personalized_pageranks(sponsor_data, chamber_letter='s', n_nays=10, upwe
 def get_consponsor_data_for_congress(congress_num, zip_file, n_nays=10, random_type="raw"):
     print("Processing Congress Number {}".format(congress_num))
     if random_type == "raw":
-        file_name = DATA_PATH + "/govtrack_cosponsor_data_{}_congress.feather".format(congress_num)
+        file_name = COSPONSOR_PATH + "/govtrack_cosponsor_data_{}_congress.feather".format(congress_num)
     if random_type == "cosponsor":
-        file_name = DATA_PATH + "/govtrack_cosponsor_data_{}_congress_smart_oppose.feather".format(congress_num)
+        file_name = COSPONSOR_PATH + "/govtrack_cosponsor_data_{}_congress_smart_oppose.feather".format(congress_num)
 
     try:
         vote_df_temp = pd.read_feather(file_name)
@@ -194,8 +193,8 @@ vote_df.sort_values("vote_id")
 vote_df["vote"].mean()
 
 if random_type == "raw":
-    vote_df.to_feather(DATA_PATH + "/govtrack_cosponsor_data.feather")
+    vote_df.to_feather(COSPONSOR_PATH + "/govtrack_cosponsor_data.feather")
 elif random_type == "cosponsor":
-    vote_df.to_feather(DATA_PATH + "/govtrack_cosponsor_data_smart_oppose.feather")
+    vote_df.to_feather(COSPONSOR_PATH + "/govtrack_cosponsor_data_smart_oppose.feather")
 
 # TODO: Upweight the things we know to be true (i.e. the yes votes)

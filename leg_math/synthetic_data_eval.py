@@ -11,11 +11,13 @@ from keras.callbacks import EarlyStopping, TerminateOnNaN
 
 from leg_math.keras_helpers import GetBest, NNnominate
 from leg_math.data_processing import process_data
-from leg_math.random_votes import generate_random_votes
+from leg_math.random_votes import generate_nominate_votes
 
 from scipy import stats
 
 from sklearn.metrics import log_loss, accuracy_score
+
+from constants import DATA_PATH
 
 import rpy2.robjects as robjects
 from rpy2.robjects import pandas2ri
@@ -26,8 +28,6 @@ pandas2ri.activate()
 base = importr("base")
 pscl = importr("pscl")
 wnominate = importr("wnominate")
-
-DATA_PATH = os.path.expanduser("~/data/leg_math/")
 
 
 def get_probs_from_nominate(votes, ideal_points, yes_points, no_points, w, beta, cdf_type="logit"):
@@ -63,7 +63,7 @@ def get_probs_from_nominate(votes, ideal_points, yes_points, no_points, w, beta,
 # Call generate random votes to ensure data exists
 data_type = "votes"
 if data_type == "test":
-    random_votes = generate_random_votes(w=np.array([1.5, 0.75, 0.75]))
+    random_votes = generate_nominate_votes(w=np.array([1.5, 0.75, 0.75]))
     random_votes = random_votes.reset_index()
     random_votes = random_votes.rename(columns={"bill_id": "vote_id"})
     random_votes["init_value"] = random_votes["partyCode"].map({100: -1, 200: 1})

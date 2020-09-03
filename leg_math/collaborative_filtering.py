@@ -141,7 +141,7 @@ class OrthReg(Regularizer):
 # np.sqrt(1.0 * np.sum(np.square(np.abs(n))))
 
 
-DATA_PATH = os.path.expanduser("~/data/leg_math/")
+from constants import DATA_PATH
 
 data_type = "votes"
 if data_type == "votes":

@@ -9,20 +9,28 @@ import seaborn as sns
 from leg_math.keras_helpers import NNnominate
 from leg_math.data_processing import process_data, drop_unanimous
 
-from keras.callbacks import EarlyStopping, TerminateOnNaN
-from keras.utils.vis_utils import model_to_dot
+from tensorflow.keras.callbacks import EarlyStopping, TerminateOnNaN
+from tensorflow.keras.utils import model_to_dot
 
 from leg_math.keras_helpers import GetBest, NNnominate
 from leg_math.data_processing import process_data
 
 from IPython.display import SVG
 
-DATA_PATH = os.path.expanduser("~/data/leg_math/")
+from constants import DATA_PATH
 EU_PATH = os.path.expanduser("~/data/eu/")
 
 most_recent_parties = pd.read_pickle(EU_PATH + "most_recent_parties.pkl")
 
 eu_votes = pd.read_pickle(EU_PATH + "eu_votes.pkl")
+eu_votes["voteid"] = eu_votes["voteid"].astype(str)
+
+vote_metadata = pd.read_pickle(EU_PATH + "eu_vote_metadata.pkl")
+vote_metadata["voteid"] = vote_metadata["voteid"].astype(str)
+vote_metadata['time_passed'] = vote_metadata['ts'].dt.year - 2004
+vote_time_passed = vote_metadata[["voteid", "time_passed"]]
+eu_votes = pd.merge(eu_votes, vote_time_passed, on='voteid')
+
 vote_df = eu_votes.rename(columns={"voteid": "vote_id"})
 vote_df = vote_df.drop(columns=["name", "obscure_id"])
 vote_df = vote_df.dropna(subset=["mepid"]).copy()
@@ -76,6 +84,7 @@ vote_df_temp["vote_id"] = vote_df_temp["vote_id"].map(vote_crosswalk_rev)
 vote_df_temp = vote_df_temp.sample(frac=1, replace=False, random_state=42)
 
 init_embedding = vote_df_temp[["leg_id", "init_value"]].drop_duplicates("leg_id").set_index("leg_id").sort_index()
+init_embedding.value_counts()
 
 if "vote_weight" not in vote_df_temp.columns:
     vote_df_temp["vote_weight"] = 1.0
@@ -159,8 +168,8 @@ model.compile(loss='binary_crossentropy', optimizer='Nadam', metrics=['accuracy'
 
 sample_weights = (1.0 * vote_data["y_train"].shape[0]) / (len(np.unique(vote_data["y_train"])) * np.bincount(vote_data["y_train"]))
 
-callbacks = [EarlyStopping('val_loss', patience=7),
-             GetBest(monitor='val_loss', verbose=1, mode='auto'),
+callbacks = [EarlyStopping('val_loss', patience=7, restore_best_weights=True),
+             # GetBest(monitor='val_loss', verbose=1, mode='auto'),
              TerminateOnNaN()]
 if data_params["covariates_list"]:
     if data_params["k_time"] > 0:
@@ -176,6 +185,7 @@ else:
     else:
         x_train = [vote_data["j_train"], vote_data["m_train"]]
         x_test = [vote_data["j_test"], vote_data["m_test"]]
+
 history = model.fit(x_train, vote_data["y_train"], epochs=5000, batch_size=32768,
                     validation_data=(x_test, vote_data["y_test"]), verbose=2, callbacks=callbacks,
                     class_weight={0: sample_weights[0],
@@ -193,6 +203,8 @@ params_and_results["val_loss"] = test_metrics[0]
 params_and_results["val_acc"] = test_metrics[1]
 
 # Count the number of nonzero dimension salience weights
+model.get_layer("wnom_term").get_weights()[0]
+np.log(model.get_layer("wnom_term").get_weights()[0])
 valid_weight_count = ~np.isclose(model.get_layer("wnom_term").get_weights()[0], 0)
 params_and_results["nonzero_dim_count"] = valid_weight_count.sum()
 
@@ -206,6 +218,7 @@ try:
     exp_log = exp_log.append(params_and_results.to_frame().transpose())
 except IOError:
     exp_log = params_and_results.to_frame().transpose()
+
 
 exp_log.to_csv(experimental_log_path, index=False)
 
@@ -227,9 +240,9 @@ ax = losses.iloc[1:, :].plot(x='epoch', figsize=[7, 10], grid=True)
 ax.set_ylabel("log loss")
 ax.set_ylim([0.0, 1.0])
 
-losses = pd.DataFrame({'epoch': [i + 1 for i in range(len(history_dict['acc']))],
-                       'training': [loss for loss in history_dict['acc']],
-                       'validation': [loss for loss in history_dict['val_acc']],
+losses = pd.DataFrame({'epoch': [i + 1 for i in range(len(history_dict['accuracy']))],
+                       'training': [loss for loss in history_dict['accuracy']],
+                       'validation': [loss for loss in history_dict['val_accuracy']],
                        })
 losses["validation"].max()
 ax = losses.iloc[1:, :].plot(x='epoch', figsize=[7, 10], grid=True)
@@ -254,8 +267,8 @@ if data_params["data_type"] == "votes" or data_params["data_type"] == "cosponsor
 cf_ideal_points = pd.DataFrame(model.get_layer("ideal_points").get_weights()[0], columns=ideal_point_names)
 cf_ideal_points["ideal_2"] = cf_ideal_points["ideal_2"] * -1
 cf_ideal_points.index = pd.Series(cf_ideal_points.index).map(vote_data["leg_crosswalk"])
-cf_ideal_points.to_pickle(EU_PATH + 'eu_ideal_points.pkl')
-cf_ideal_points.to_csv(EU_PATH + 'eu_ideal_points.csv')
+# cf_ideal_points.to_pickle(EU_PATH + 'eu_ideal_points.pkl')
+# cf_ideal_points.to_csv(EU_PATH + 'eu_ideal_points.csv')
 
 cf_ideal_points["ideal_1"].hist()
 cf_ideal_points["ideal_2"].hist()
@@ -290,4 +303,56 @@ hue_map = {'PPE': '#3399FF',
 
 
 g = sns.scatterplot(x="ideal_1", y="ideal_2", hue="party_plot", data=leg_data, palette=hue_map, style="active", style_order=["active", "inactive"], alpha=0.75)
-g.figure.savefig(EU_PATH + "eu_ideologies.pdf")
+g.figure.savefig(EU_PATH + "eu_ideologies_nn_nominate.png")
+
+
+from leg_math.keras_helpers import NNitemresponse
+model_params.pop("yes_point_dropout")
+model_params.pop("no_point_dropout")
+model_params["batch_normalize"] = True
+model_params["k_time"] = 0
+item_model = NNitemresponse(**model_params)
+
+item_model.summary()
+
+# SVG(model_to_dot(model).create(prog='dot', format='svg'))
+
+# model.compile(loss='mse', optimizer='adamax')
+item_model.compile(loss='binary_crossentropy', optimizer='Nadam', metrics=['accuracy'])
+item_history = item_model.fit(x_train, vote_data["y_train"], epochs=5000, batch_size=32768,
+                              validation_data=(x_test, vote_data["y_test"]), verbose=2, callbacks=callbacks,
+                              class_weight={0: sample_weights[0],
+                                            1: sample_weights[1]})
+train_metrics = item_model.evaluate(x_train, vote_data["y_train"], batch_size=10000)
+test_metrics = item_model.evaluate(x_test, vote_data["y_test"], batch_size=10000)
+
+cf_ideal_points = pd.DataFrame(item_model.get_layer("ideal_points").get_weights()[0], columns=ideal_point_names)
+cf_ideal_points["ideal_2"] = cf_ideal_points["ideal_2"] * -1
+cf_ideal_points.index = pd.Series(cf_ideal_points.index).map(vote_data["leg_crosswalk"])
+
+leg_data = pd.merge(most_recent_parties, cf_ideal_points, left_on="person_id", right_index=True)
+leg_data["person_id"].duplicated().any()
+# membership_counts = leg_data["party"].value_counts()
+#
+leg_data.plot(kind="scatter", x='ideal_1', y='ideal_2')
+
+sns.set(rc={'figure.figsize': (8.0, 8.0)})
+
+hue_map = {'PPE': '#3399FF',
+           'S&D': '#FF0000',
+           'RE': 'gold',
+           'Verts/ALE': '#009900',
+           'ID': '#2B3856',
+           'CRE': '#0054A5',
+           'GUE/NGL': '#990000',
+           'NA': '#999999',
+           'EFDD': '#24B9B9',
+           }
+
+cf_ideal_points.hist()
+g = sns.scatterplot(x="ideal_1", y="ideal_2", hue="party_plot", data=leg_data, palette=hue_map, style="active", style_order=["active", "inactive"], alpha=0.75)
+g.figure.savefig(EU_PATH + "eu_ideologies_item_response.png")
+
+item_model.get_layer("main_output").get_weights()[0]
+pd.DataFrame(item_model.get_layer("polarity").get_weights()[0]).plot(kind="scatter", x=0, y=1, alpha=0.25)
+pd.DataFrame(item_model.get_layer("popularity").get_weights()[0]).hist()

@@ -1,38 +1,63 @@
-import os
 import numpy as np
 import pandas as pd
 
-DATA_PATH = os.path.expanduser("~/data/leg_math/")
+from constants import DATA_PATH
 
 
 def drop_unanimous(vote_df,
                    min_vote_count=20,
                    unanimity_percentage=0.03,
                    ):
+    '''Verifies that the votes meet unanimity conditions and legislators meet minimum vote counts
 
+    # Arguments:
+        vote_df (DataFrame): A dataframe containing vote data. At a minimum this includes three
+            columns (leg_id, vote_id, and vote). Other columns in the DataFrame are retained and
+            returned in the result.
+        min_vote_count (int): A legislator must have cast at least this many votes to be included in
+            the result
+        unanimity_percentage (float): A percentage in the interval [0, 1]. If fewer than this
+            percentage vote in the minority, the vote is dropped from the result.
+    # Returns:
+        vote_df (DataFrame): A modified vote DataFrame, with infrequent voters and (near)unanimous
+            votes dropped
+    '''
+
+    # Set termination conditions prior to loop
     voter_condition = True
     unanimity_condition = True
 
+    # While loop over both the voter condition and the unanimity condition are met
+    # Need to ensure that legislators still meet minimum vote count even after unanimous bills
+    # are dropped (and vice versa)
     while voter_condition or unanimity_condition:
         print("Testing legislator vote counts")
+        # Count the number of votes cast by each legislator id
         leg_vote_counts = vote_df["leg_id"].value_counts()
+        # Determine which meet the requirement
         valid_legs = leg_vote_counts[leg_vote_counts > min_vote_count]
         valid_leg_ids = pd.DataFrame(valid_legs.index, columns=["leg_id"])
         n_leg_diff = len(leg_vote_counts) - len(valid_legs)
+        # If there is a difference, keep only those that met the condition
         if n_leg_diff > 0:
             vote_df = vote_df.merge(valid_leg_ids, on="leg_id", how="inner")
         print("Dropped {} legislators with fewer than {} votes".format(n_leg_diff, min_vote_count))
+        # Update voting condition
         voter_condition = (n_leg_diff > 0)
 
         print("Testing unanimity condition")
+        # Get the percentage voting yea on a given bill
         vote_percentages = vote_df.groupby("vote_id")[["vote"]].mean()
+        # Identify votes where the yea percentage is within the unanimity_percentage (for either side)
         nonunanimous_votes = vote_percentages[(vote_percentages["vote"] < (1 - unanimity_percentage)) &
                                               (vote_percentages["vote"] > unanimity_percentage)]
         nonunanimous_vote_ids = pd.DataFrame(nonunanimous_votes.index)
         n_vote_diff = len(vote_percentages) - len(nonunanimous_vote_ids)
+        # Keep only nonunanimous votes by merging
         if n_vote_diff > 0:
             vote_df = vote_df.merge(nonunanimous_vote_ids, on="vote_id", how="inner")
         print("Dropped {} votes with fewer than {}% voting in the minority".format(n_vote_diff, unanimity_percentage * 100))
+        # Update condition
         unanimity_condition = (n_vote_diff > 0)
 
     return vote_df
@@ -200,87 +225,3 @@ def process_data(data_type="test", congress_cutoff=0, k_dim=1, k_time=0,
         return vote_data, vote_df
     else:
         return vote_data
-
-
-if __name__ == '__main__':
-    renew_files = True
-    DATA_PATH = os.path.expanduser("~/data/leg_math/")
-
-    print("Load raw files")
-    if renew_files:
-        # Documentation at: https://voteview.com/static/docs/csv_docs.html
-        vote_metadata = pd.read_csv("https://voteview.com/static/data/out/rollcalls/HSall_rollcalls.csv",
-                                    usecols=["congress", "chamber", "rollnumber", "date", "session", "bill_number"])
-        roll_call_votes = pd.read_csv("https://voteview.com/static/data/out/votes/HSall_votes.csv",
-                                      usecols=["congress", "chamber", "rollnumber", "icpsr", "cast_code"])
-        leg_data = pd.read_csv("https://voteview.com/static/data/out/members/HSall_members.csv")
-        party_data = pd.read_csv("https://voteview.com/static/data/out/parties/HSall_parties.csv")
-
-        roll_call_votes = roll_call_votes.rename(columns={"icpsr": "leg_id"})
-        leg_data = leg_data.rename(columns={"icpsr": "leg_id"})
-
-        vote_metadata["vote_id"] = (vote_metadata["congress"].astype(str) +
-                                    vote_metadata["chamber"].str.slice(0, 1).str.lower() + "_" +
-                                    vote_metadata["rollnumber"].astype(str).str.zfill(4))
-        roll_call_votes["vote_id"] = (roll_call_votes["congress"].astype(str) +
-                                      roll_call_votes["chamber"].str.slice(0, 1).str.lower() + "_" +
-                                      roll_call_votes["rollnumber"].astype(str).str.zfill(4))
-
-        vote_metadata.to_feather(DATA_PATH + "vote_metadata.feather")
-        roll_call_votes.to_feather(DATA_PATH + "roll_call_votes.feather")
-        leg_data.to_feather(DATA_PATH + "leg_data.feather")
-        party_data.to_feather(DATA_PATH + "party_data.feather")
-    else:
-        vote_metadata = pd.read_feather(DATA_PATH + "vote_metadata.feather")
-        roll_call_votes = pd.read_feather(DATA_PATH + "roll_call_votes.feather")
-        leg_data = pd.read_feather(DATA_PATH + "leg_data.feather")
-        party_data = pd.read_feather(DATA_PATH + "party_data.feather")
-
-    assert not roll_call_votes.duplicated(["leg_id", "vote_id"]).any(), "Duplicated leg/vote pairs!"
-
-    leg_party = leg_data[["leg_id", "party_code"]].drop_duplicates()
-    leg_party[leg_party["leg_id"].duplicated(keep=False)].sort_values("leg_id")
-
-    print("Get majority party")
-    party_majority_rows = party_data.groupby(["congress", "chamber"])["n_members"].idxmax().values
-    party_data["majority_party"] = party_data.index.isin(party_majority_rows)
-    majority_parties = party_data.loc[party_data["majority_party"], ["congress", "chamber", "party_code"]]
-    majority_parties = majority_parties.rename(columns={"party_code": "majority_party_code"})
-    leg_data = pd.merge(leg_data, majority_parties, on=["congress", "chamber"])
-    leg_data["in_majority"] = 1 * (leg_data["party_code"] == leg_data["majority_party_code"])
-
-    leg_data.columns
-
-    print("Map the vote categories")
-
-    yea_codes = [1, 2, 3]
-    nay_codes = [4, 5, 6]
-    present_codes = [7, 8]
-    not_voting_codes = [0, 9]
-    roll_call_votes["vote"] = np.nan
-    roll_call_votes.loc[roll_call_votes["cast_code"].isin(yea_codes), "vote"] = 1
-    roll_call_votes.loc[roll_call_votes["cast_code"].isin(nay_codes), "vote"] = 0
-
-    print("Subset to valid votes")
-    vote_df = roll_call_votes.dropna(subset=["vote"]).copy().reset_index(drop=True)
-    assert not vote_df.duplicated(["leg_id", "vote_id"]).any(), "Duplicated leg/vote pairs!"
-    vote_df.to_feather(DATA_PATH + "vote_df_raw.feather")
-    # vote_df = pd.read_feather(DATA_PATH + "vote_df_raw.feather")
-    # initial_congress = 110
-    # vote_df = vote_df[vote_df["congress"] >= initial_congress].copy()
-
-    print("Clean data to meet minimum vote conditions")
-    vote_df = drop_unanimous(vote_df)
-
-    assert not vote_df.duplicated(["leg_id", "vote_id"]).any(), "Duplicated leg/vote pairs!"
-
-    leg_data["init_value"] = 0
-    leg_data.loc[leg_data["party_code"] == 100, "init_value"] = -1
-    leg_data.loc[leg_data["party_code"] == 200, "init_value"] = 1
-    merge_leg_data = leg_data[["congress", "leg_id", "init_value", "in_majority"]].drop_duplicates(["congress", "leg_id"])
-    vote_df = pd.merge(vote_df, merge_leg_data, on=["congress", "leg_id"])
-    assert not vote_df.duplicated(["leg_id", "vote_id"]).any(), "Duplicated leg/vote pairs!"
-
-    vote_df.to_feather(DATA_PATH + "vote_df_cleaned.feather")
-
-    len(vote_df["vote_id"].unique())

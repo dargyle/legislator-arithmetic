@@ -3,7 +3,7 @@
 # author: "Daniel Argyle"
 # date: "6/12/2018"
 # output: html_document
-output: 
+output:
   pdf_document:
     citation_package: natbib
     keep_tex: true
@@ -15,7 +15,7 @@ thanks: "This work is considered preliminary and should not be cited without per
 author:
 - name: Daniel Argyle
   affiliation: FiscalNote
-abstract: "We introduce a neural network implementation of ideal point estimation called NN-NOMINATE that scales well to large datasets and allows incorporation of additional metadata. We test the model on synthetic data, the entire corpus of US Congressional votes, and cosponsorship decisions since the 93rd Congress. These experiments show that the model behaves as expected and that, when using a held out set of votes as a validation set, we are able to make informed decisions about the model structure including the number of dimesions and whether or not to add covariates."
+abstract: "We introduce a neural network implementation of ideal point estimation called NN-NOMINATE that scales well to large datasets and allows incorporation of additional metadata. We test the model on synthetic data, the entire corpus of US Congressional votes, and cosponsorship decisions since the 93rd Congress. These experiments show that the model behaves as expected and that, when using a held out set of votes as a validation set, we are able to make informed decisions about the model structure including the number of dimensions and whether or not to add covariates."
 keywords: "ideal point estimation"
 date: "`r format(Sys.time(), '%B %d, %Y')`"
 geometry: margin=1in
@@ -36,7 +36,7 @@ header-includes:
 ```{r setup, include=FALSE}
 # Setup a python instance to use
 library(reticulate)
-use_condaenv("leg_math")
+use_condaenv("leg_math_new")
 ```
 
 ```{python, include=FALSE}
@@ -49,14 +49,14 @@ import pickle
 from leg_math.keras_helpers import NNnominate
 from leg_math.data_processing import process_data
 
-from keras.utils import plot_model
+from tensorflow.keras.utils import plot_model, model_to_dot
 
 import matplotlib.pyplot as plt
 import seaborn as sns
 
 from scipy import stats
 
-DATA_PATH = os.path.expanduser("~/data/leg_math/")
+from constants import DATA_PATH
 
 i = 2
 data_params = dict(
@@ -172,10 +172,10 @@ for data_type in ["test", "votes"]:
     ax2.legend()
     ax2.set(xlim=(0.9, top_dim - 1 + 0.1), xticks=range(1, top_dim), ylabel="accuracy", xlabel="Number of Dimensions", title="Accuracy")
     fig
-    
+
     fig.savefig(f"{data_type}_metrics.png", bbox_inches='tight')
     fig.clf()
-    
+
     fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 6))
     # sns.regplot(x, y, ax=ax1)
     # sns.kdeplot(x, ax=ax2)
@@ -194,7 +194,7 @@ for data_type in ["test", "votes"]:
     ax2.legend()
     ax2.set(xlim=(0.9, top_dim - 1 + 0.1), xticks=range(1, top_dim), ylabel="accuracy", xlabel="Number of Dimensions", title="Accuracy")
     fig
-    
+
     fig.savefig(f"{data_type}_metrics_with_wnom.png", bbox_inches='tight')
     fig.clf()
 
@@ -291,7 +291,7 @@ fig.clf()
 
 We propose a neural network implementation of ideal-point estimation that scales well to large datasets and allows incorporation of additional metadata, which we call NN-NOMINATE. Neural networks are well suited for ideal point models, and the performance benefit, along with distributed computing capabilities, allows application of ideal point estimation to pooled datasets where computation was previously infeasible due to scale. We demonstrate the algorithm on two different datasets, the complete history of US Congressional roll call votes and modern cosponsorship behavior, and compare the results against standard ideal point estimation techniques.
 
-We demonstrate NN-NOMINATE in two ways. First, we jointly estimate ideal points over the pooled set of US Congressional roll call votes from 1789-2018.  Unidimensional ideal points from the neural network implementation are similar to the conventional DW-NOMINATE results.  However, cross validation scores indicate that the data are better explained with more than one dimension. Clustering the multidimensional ideal points yields intuitive temporal and ideological groupings and provides a more nuanced picture of ideological polarization. 
+We demonstrate NN-NOMINATE in two ways. First, we jointly estimate ideal points over the pooled set of US Congressional roll call votes from 1789-2018.  Unidimensional ideal points from the neural network implementation are similar to the conventional DW-NOMINATE results.  However, cross validation scores indicate that the data are better explained with more than one dimension. Clustering the multidimensional ideal points yields intuitive temporal and ideological groupings and provides a more nuanced picture of ideological polarization.
 
 To evaluate algorithmic performance, we test the resulting estimates on both training and test data by holding out a subset of legislators’ votes. This allows us to compare the quality of different model parameterizations and choice of dimensions while still guarding against overfitting. Specifically, we directly compare the performance of NN-NOMINATE to different ideal point parameterizations such as DW-NOMINATE and the conventional Bayesian parameterization.
 
@@ -340,7 +340,7 @@ While neural networks have become strongly associated with deep learning and bla
 knitr::include_graphics('model.png')
 ```
 
-+ Input layers: The inputs to this model consist of numeric identifiers for both legisators and bills. 
++ Input layers: The inputs to this model consist of numeric identifiers for both legisators and bills.
 
 + Embedding layers: These layers take the numeric identifiers and convert them into continuous parameters, for example mapping a specific legislator to her ideal point vector. In this model there is one ideal point embedding for legislators, and two embeddings for bills, the yes point and the no point, that correspond to numeric values associated with W-NOMINATE style estimation. The ideal point layer is restricted in two ways to make the results match more closely to the W-NOMINATE framework. First, the model includes orthogonality regularization on the ideal points \citep{orthreg1, orthreg2}. This penalizes correlation between ideal point dimensions and ensures that the resulting estimates are orthogonal so that each dimension represents a unique facet of ideology, rather than a slight variant of the same overall single dimension. Ideal point embeddings are also given a maximum norm constraint, which ensures that the norm of the ideal point vector for any legislator lies within the unit hypersphere (a common feature of W-NOMINATE).[^4]
 
@@ -364,7 +364,7 @@ We demonstrate that the neural network implementation works at least as well as 
 
 The synthetic data is generated to have 3 known dimensions, where the random predictions are generated in the NOMINATE parameterization found in equation \ref{eq:wnom}. To guard against overfitting to specific synthetic votes, we train the model on a subset of the data and test it on 20\% of the synthetic votes as a held out set. This means that a legislator's ideal point is determined only by the votes in the training sample and that a bill's parameters are determined only by the subset of votes on that bill that appear in training. An additional implication of this is that at least some votes on a bill must appear in the training set for the bill to appear in the test set.
 
-There are two primary benefits to using a held out sample. First, relying on an out of sample evaluation set is often used to determine when a neural network has converged while estimating a model. There is little point in continuing to optimize a model where out of sample performance has plateaued and doing so usually results in overfitting. 
+There are two primary benefits to using a held out sample. First, relying on an out of sample evaluation set is often used to determine when a neural network has converged while estimating a model. There is little point in continuing to optimize a model where out of sample performance has plateaued and doing so usually results in overfitting.
 
 Second, performance on a held out sample can be used to make additional decisions about the model structure, including parameterization choices or for evaluating distributional assumptions.[^13] For example, how does making the ideal points dynamic affect the model performance? What is the optimal number of ideal point dimensions? An additional dimension may offer an improvement in out of sample prediction, but it almost always increases in sample performance. An out of sample performance test provides an objective metric to determine the optimal number of dimensions to include.[^5] If a practitioner finds it undesirable to omit votes in this fashion, the model could then be refit on the entire dataset using the model setup that performed best on the test data.
 
@@ -439,7 +439,7 @@ While it is comforting to know that a new implementation of an existing model re
 
 ## Large scale implementation
 
-We examine two large datasets, all of which can be fitted easily on most common computers.[^7] The first is simply the entire history of US rollcalls. Additionally, this model is dynamic, making it similar to the DW-NOMINATE parameterization. A legislators ideal point at time $t$ is decomposed into a linear function of time, $x_{ikt} = x_{ik} + \delta_{ik} t_i$, where $x_{ik}$ is a constant ideal point for legislator $i$ in dimension $k$, $\delta_{ik}$ is a drift parameter for legislator $i$ on dimension $k$, and $t_i$ represents how long a legislator has been serving in congress.[^17] 
+We examine two large datasets, all of which can be fitted easily on most common computers.[^7] The first is simply the entire history of US rollcalls. Additionally, this model is dynamic, making it similar to the DW-NOMINATE parameterization. A legislators ideal point at time $t$ is decomposed into a linear function of time, $x_{ikt} = x_{ik} + \delta_{ik} t_i$, where $x_{ik}$ is a constant ideal point for legislator $i$ in dimension $k$, $\delta_{ik}$ is a drift parameter for legislator $i$ on dimension $k$, and $t_i$ represents how long a legislator has been serving in congress.[^17]
 
 [^7]: Neural networks have a reputation as require lots of processing power, including the use of graphics cards. However, for a straightforward model like this, such processing power is not necessary. Formal performance comparisions to existing methods is forthcoming.
 <!-- Note that in the case of the WNOMINATE and pscl packages, performance comparisons are impossible because they require computaiton of a roll call matrix that is IxJ which is more than can easily fit in memory (assuming integer values for all votes this still takes up more than XXGB). -->

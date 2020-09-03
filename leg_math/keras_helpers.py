@@ -6,28 +6,30 @@ import pickle
 
 import warnings
 
-from keras.layers import Embedding, Reshape, Dropout, SpatialDropout1D, Dense, Flatten, Input, Dot, LSTM, Add, Subtract, Conv1D, MaxPooling1D, Concatenate, Multiply, BatchNormalization, Lambda, Activation, InputSpec
-from keras.models import Sequential, Model
-from keras.initializers import TruncatedNormal
-from keras import regularizers
-from keras.regularizers import Regularizer
-from keras.callbacks import Callback, EarlyStopping, ModelCheckpoint, TerminateOnNaN
-from keras.constraints import Constraint, unit_norm, MinMaxNorm
-from keras.engine.topology import Layer
-from keras.initializers import Constant
-from keras import optimizers
-from keras.utils.generic_utils import get_custom_objects
-# from keras.layers import constraints
-from keras import constraints
+import tensorflow as tf
+from tensorflow import keras
+from tensorflow.keras.layers import Embedding, Reshape, Dropout, SpatialDropout1D, Dense, Flatten, Input, Dot, LSTM, Add, Subtract, Conv1D, MaxPooling1D, Concatenate, Multiply, BatchNormalization, Lambda, Activation, InputSpec
+from tensorflow.keras.models import Sequential, Model
+from tensorflow.keras.initializers import TruncatedNormal
+from tensorflow.keras import regularizers
+from tensorflow.keras.regularizers import Regularizer
+from tensorflow.keras.callbacks import Callback, EarlyStopping, ModelCheckpoint, TerminateOnNaN
+from tensorflow.keras.constraints import Constraint, unit_norm, MinMaxNorm, non_neg
+# from tensorflow.keras.engine.topology import Layer
+from tensorflow.keras.layers import Layer
+from tensorflow.keras.initializers import Constant
+from tensorflow.keras import optimizers
+from tensorflow.keras.utils import get_custom_objects
+# from tensorflow.keras.layers import constraints
+from tensorflow.keras import constraints
 
-from keras.models import load_model
+from tensorflow.keras.models import load_model
 
 from IPython.display import SVG
-from keras.utils.vis_utils import model_to_dot
+from tensorflow.keras.utils import model_to_dot
 
-from keras import backend as K
+from tensorflow.keras import backend as K
 
-import tensorflow as tf
 import tensorflow.keras.backend as B
 # import tensorflow_hub as hub
 # from tensorflow.python.keras.engine import Layer
@@ -141,7 +143,7 @@ class OrthReg(Regularizer):
             cov2_t = tf.linalg.diag(1 / K.sqrt(tf.linalg.diag_part(cov_t) + K.epsilon()))
             cor = cov2_t @ cov_t @ cov2_t
             # Norm of the off diagonal elements
-            eye = K.eye(K.int_shape(cor)[0])
+            eye = np.eye(K.int_shape(cor)[0])
             # Penalize by the off diagonal elements
             norm = self.rf * K.sqrt(K.sum(K.square(cor - eye)) + K.epsilon())
             # norm = K.print_tensor(norm, message="norm is: ")
@@ -301,24 +303,24 @@ class JointWnomTerm(Layer):
         return result
 
     def get_config(self):
-            config = {
-                'output_dim': self.output_dim,
-                # 'units': self.units,
-                # 'activation': activations.serialize(self.activation),
-                # 'use_bias': self.use_bias,
-                # 'kernel_initializer': initializers.serialize(self.kernel_initializer),
-                # 'bias_initializer': initializers.serialize(self.bias_initializer),
-                'kernel_regularizer': regularizers.serialize(self.kernel_regularizer),
-                # 'bias_regularizer': regularizers.serialize(self.bias_regularizer),
-                # 'activity_regularizer': regularizers.serialize(self.activity_regularizer),
-                'kernel_constraint': constraints.serialize(self.kernel_constraint),
-                # 'bias_constraint': constraints.serialize(self.bias_constraint)
-            }
-            base_config = super(JointWnomTerm, self).get_config()
-            return dict(list(base_config.items()) + list(config.items()))
+        config = {
+            'output_dim': self.output_dim,
+            # 'units': self.units,
+            # 'activation': activations.serialize(self.activation),
+            # 'use_bias': self.use_bias,
+            # 'kernel_initializer': initializers.serialize(self.kernel_initializer),
+            # 'bias_initializer': initializers.serialize(self.bias_initializer),
+            'kernel_regularizer': regularizers.serialize(self.kernel_regularizer),
+            # 'bias_regularizer': regularizers.serialize(self.bias_regularizer),
+            # 'activity_regularizer': regularizers.serialize(self.activity_regularizer),
+            'kernel_constraint': constraints.serialize(self.kernel_constraint),
+            # 'bias_constraint': constraints.serialize(self.bias_constraint)
+        }
+        base_config = super(JointWnomTerm, self).get_config()
+        return dict(list(base_config.items()) + list(config.items()))
 
     def compute_output_shape(self, input_shape):
-            return (input_shape[0][0], self.output_dim)
+        return (input_shape[0][0], self.output_dim)
 
 
 def standardize(x):
@@ -419,7 +421,7 @@ def NNnominate(n_leg, n_votes,
                              embeddings_regularizer=OrthReg(1e-1),
                              # embeddings_regularizer=UnitSphere(1e-1),
                              # embeddings_regularizer=regularizers.l2(1e-2),
-                             # embeddings_constraint=unit_norm(axis=1),
+                             # embeddings_constraint=unit_norm(),
                              # embeddings_constraint=UnitSphere(),
                              # embeddings_constraint=UnitMetric(axis=1),
                              embeddings_constraint=MinMaxNorm(min_value=0.0, max_value=1.0, axis=1, rate=1.0),
@@ -451,8 +453,9 @@ def NNnominate(n_leg, n_votes,
 
     # Generate yes_point embedding layer
     yes_point = Embedding(input_dim=n_votes, output_dim=k_dim, input_length=1, name="yes_point",
-                          embeddings_constraint=MinMaxNorm(min_value=0.0, max_value=1.0, axis=1, rate=1.0),
-                          # embeddings_initializer=TruncatedNormal(mean=0.0, stddev=0.3, seed=None),
+                          # embeddings_constraint=MinMaxNorm(min_value=0.0, max_value=1.0, axis=1, rate=1.0),
+                          embeddings_initializer=TruncatedNormal(mean=0.0, stddev=0.3, seed=None),
+                          embeddings_regularizer=OrthReg(1e-1),
                           )(bill_input)
     # yes_point dropout regularization
     if yes_point_dropout > 0.0:
@@ -465,8 +468,9 @@ def NNnominate(n_leg, n_votes,
 
     # Generate no_point embedding layer
     no_point = Embedding(input_dim=n_votes, output_dim=k_dim, input_length=1, name="no_point",
-                         embeddings_constraint=MinMaxNorm(min_value=0.0, max_value=1.0, axis=1, rate=1.0),
-                         # embeddings_initializer=TruncatedNormal(mean=0.0, stddev=0.3, seed=None),
+                         # embeddings_constraint=MinMaxNorm(min_value=0.0, max_value=1.0, axis=1, rate=1.0),
+                         embeddings_initializer=TruncatedNormal(mean=0.0, stddev=0.3, seed=None),
+                         embeddings_regularizer=OrthReg(1e-1),
                          )(bill_input)
     # no_point dropout regularization
     if no_point_dropout > 0.0:
@@ -479,6 +483,7 @@ def NNnominate(n_leg, n_votes,
 
     # Combine ideal_points, yes_points, and no_points using a custom dwnominate layer
     combined = JointWnomTerm(output_dim=1, trainable=True, name="wnom_term",
+                             kernel_constraint=non_neg(),
                              # kernel_constraint=SumToOne(),
                              # kernel_regularizer=regularizers.l2(1e-2),
                              )([flat_ideal_points, flat_yes_point, flat_no_point])
@@ -553,6 +558,9 @@ def NNitemresponse(n_leg, n_votes,
     leg_input = Input(shape=(1, ), dtype="int32", name="leg_input")
     bill_input = Input(shape=(1, ), dtype="int32", name="bill_input")
 
+    # Generate inputs
+    time_input_list = [generate_time_input(i) for i in range(1, k_time + 1)]
+
     # If initial weights are not provided, set at random
     if init_leg_embedding.empty:
         init_leg_embedding = pd.DataFrame(np.random.uniform(-1, 1, size=(n_leg, k_dim)))
@@ -590,7 +598,7 @@ def NNitemresponse(n_leg, n_votes,
     flat_ideal_points = Reshape((k_dim,))(main_ideal_points)
 
     polarity = Embedding(input_dim=n_votes, output_dim=k_dim, input_length=1, name="polarity",
-                         embeddings_constraint=MinMaxNorm(min_value=0.0, max_value=3.0, axis=1, rate=1.0),
+                         # embeddings_constraint=MinMaxNorm(min_value=0.0, max_value=3.0, axis=1, rate=1.0),
                          # embeddings_initializer=TruncatedNormal(mean=0.0, stddev=0.05, seed=None),
                          )(bill_input)
     if polarity_dropout > 0.0:
@@ -598,7 +606,7 @@ def NNitemresponse(n_leg, n_votes,
     flat_polarity = Reshape((k_dim,))(polarity)
     if use_popularity:
         popularity = Embedding(input_dim=n_votes, output_dim=1, input_length=1, name="popularity",
-                               embeddings_constraint=MinMaxNorm(min_value=0.0, max_value=3.0, axis=1, rate=1.0),
+                               # embeddings_constraint=MinMaxNorm(min_value=0.0, max_value=3.0, axis=1, rate=1.0),
                                # embeddings_initializer=TruncatedNormal(mean=0.0, stddev=0.05, seed=None),
                                )(bill_input)
         if popularity_dropout > 0.0:

@@ -1,4 +1,4 @@
-import os
+ import os
 import numpy as np
 import pandas as pd
 
@@ -7,9 +7,9 @@ import pickle
 from leg_math.keras_helpers import NNnominate
 from leg_math.data_processing import process_data
 
-DATA_PATH = os.path.expanduser("~/data/leg_math/")
+from constants import DATA_PATH
 
-i = 5
+i = 3
 data_params = dict(
                data_type="test",
                congress_cutoff=0,
@@ -87,14 +87,14 @@ ax.set_ylabel("log loss")
 ax.set_ylim([0.0, 3.0])
 
 
-losses = pd.DataFrame({'epoch': [i + 1 for i in range(len(history_dict['acc']))],
-                       'training': [loss for loss in history_dict['acc']],
-                       'validation': [loss for loss in history_dict['val_acc']],
+losses = pd.DataFrame({'epoch': [i + 1 for i in range(len(history_dict['accuracy']))],
+                       'training': [loss for loss in history_dict['accuracy']],
+                       'validation': [loss for loss in history_dict['val_accuracy']],
                        })
 losses["validation"].max()
 ax = losses.iloc[1:, :].plot(x='epoch', figsize=[7, 10], grid=True)
 ax.set_ylabel("accuracy")
-ax.set_ylim([0.0, 3.0])
+ax.set_ylim([0.0, 1.0])
 
 if data_params["data_type"] == "votes" or data_params["data_type"] == "cosponsor":
     leg_data = pd.read_feather(DATA_PATH + "leg_data.feather")
@@ -110,7 +110,7 @@ if data_params["data_type"] == "votes" or data_params["data_type"] == "cosponsor
 k_dim = data_params["k_dim"]
 k_time = data_params["k_time"]
 if data_params["data_type"] == "test":
-    test_actual = False
+    test_actual = True
     if test_actual:
         leg_data = pd.read_csv(DATA_PATH + "/test_legislators.csv", index_col=0).reset_index()
     else:
@@ -139,7 +139,8 @@ if data_params["data_type"] == "test":
     col_names = (["leg_id", "state_icpsr", "bioname", "party_code"] +
                  [f"nominate_dim{i}" for i in range(1, k_dim + 1)] +
                  [f"coord{i}D" for i in range(1, k_dim + 1)])
-leg_bio_data = leg_data[col_names].drop_duplicates()
+leg_bio_data = leg_data.loc[col_names].drop_duplicates()
+# leg_bio_data = leg_data
 
 fitted_model.get_layer("main_output").get_weights()[0]
 fitted_model.get_layer("wnom_term").get_weights()[0].round(5)
