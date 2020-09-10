@@ -225,8 +225,10 @@ def get_consponsor_data_for_congress(congress_num, zip_file, n_nays=10, random_t
 
         vote_df_temp = pd.concat([vote_df, nay_df, clear_nays], ignore_index=True)
     if random_type == "pagerank":
+        print('Processing Senate')
         s_df_temp = get_personalized_pageranks(sponsor_data, chamber_letter='s', n_nays=int(n_nays / 4.0),
                                                upweight_primary_sponsor=True, min_bills_sponsored=25)
+        print('Processing House')
         h_df_temp = get_personalized_pageranks(sponsor_data, chamber_letter='h', n_nays=n_nays,
                                                upweight_primary_sponsor=True, min_bills_sponsored=25)
         vote_df_temp = pd.concat([s_df_temp, h_df_temp], ignore_index=True)
