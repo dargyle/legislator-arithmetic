@@ -7,6 +7,8 @@ from zipfile import ZipFile
 
 import igraph
 
+from tqdm import tqdm
+
 from constants import DATA_PATH
 
 COSPONSOR_PATH = DATA_PATH + "cosponsor/"
@@ -124,7 +126,7 @@ def get_personalized_pageranks(sponsor_data,
 
     inferred_vote_list = []
     # Generate inferred nays for all bill ids in the data
-    for bill_id in bill_ids:
+    for bill_id in tqdm(bill_ids):
         # print(bill_id)
         # Get the set of sponsors for a bill and set them as the reset values in the personalized
         # pagerank calculation. Reset values are expected as probability vector for each vertex
@@ -189,7 +191,7 @@ def get_consponsor_data_for_congress(congress_num, zip_file, n_nays=10, random_t
     '''
     print("Processing Congress Number {}".format(congress_num))
     # Extract the cosponsor data from the zip file
-    sponsor_data = pd.read_csv(zip_file.open("govtrack_cosponsor_data_{}_congress.csv".format(congress_num)))
+    sponsor_data = pd.read_csv(zip_file.open("govtrack_cosponsor_data_{}_congress.csv".format(congress_num)), low_memory=False)
 
     # Sponsor data has occasional duplicate values
     # Keep value associated with Primary sponsor
@@ -214,7 +216,7 @@ def get_consponsor_data_for_congress(congress_num, zip_file, n_nays=10, random_t
     bill_ids = sponsor_data["bill_number"].unique()
 
     if random_type == "raw":
-        nay_dfs = [generate_nays(bill_id, n_nays, vote_df, h_list, s_list) for bill_id in bill_ids]
+        nay_dfs = [generate_nays(bill_id, n_nays, vote_df, h_list, s_list) for bill_id in tqdm(bill_ids)]
         nay_df = pd.concat(nay_dfs)
 
         vote_df["vote"] = 1
@@ -247,22 +249,23 @@ if __name__ == '__main__':
     # Data is available from 93rd to 114th congresses
     congress_range = range(93, 115)
     # random_type determines what kind of "no's" to generate
-    random_types = ["pagerank", "raw"]
+    random_types = ["raw", "pagerank"]
 
     # Process each individual congress and save the result
     for random_type in random_types:
+        print('Generating synthetic nays using {}'.format(random_type))
         for i in congress_range:
-            print('Generating synthetic nays using {}'.format(random_type))
             vote_df_temp = get_consponsor_data_for_congress(i, zip_file, n_nays=25, random_type=random_type)
             # Generate file name for the extracted cosponsorship
             file_name = COSPONSOR_PATH + "/govtrack_cosponsor_data_{}_congress_{}.feather".format(i, random_type)
             # Save individual files
             vote_df_temp.to_feather(file_name)
 
+        print('Concatenate all the data files')
         cosponsor_data_list = []
         for i in congress_range:
             file_name = COSPONSOR_PATH + "/govtrack_cosponsor_data_{}_congress_{}.feather".format(i, random_type)
-            congres_data_list = pd.read_feather(file_name)
+            cosponsor_data_list += [pd.read_feather(file_name)]
 
         # Combine all sessions into a single dataset
         vote_df = pd.concat(cosponsor_data_list, ignore_index=True)
@@ -272,9 +275,11 @@ if __name__ == '__main__':
         vote_df["congress"] = vote_df["bill_number"].str.split("-").str.get(1).astype(int)
         vote_df["chamber"] = vote_df["bill_number"].str.slice(0, 1)
 
-        vote_df = pd.merge(vote_df, leg_data[["thomas_id", "party", "icpsr_id"]])
-        vote_df["thomas_id"] = vote_df["thomas_id"].astype(int)
-        # vote_df["icpsr_id"] = vote_df["icpsr_id"].astype(int)
+        party_data = leg_data[["thomas_id", "party", "icpsr_id"]].dropna()
+        party_data["thomas_id"] = party_data["thomas_id"].astype(int)
+        party_data["icpsr_id"] = party_data["icpsr_id"].astype(int)
+
+        vote_df = pd.merge(vote_df, party_data, how="left")
         vote_df["init_value"] = 0
         vote_df.loc[vote_df["party"] == "Democrat", "init_value"] = -1
         vote_df.loc[vote_df["party"] == "Republican", "init_value"] = 1
