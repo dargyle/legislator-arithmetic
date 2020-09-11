@@ -5,13 +5,14 @@ import pandas as pd
 import pickle
 
 from IPython.display import SVG
-from keras.utils.vis_utils import model_to_dot
+from tensorflow.keras.utils import model_to_dot
 
-from keras.callbacks import EarlyStopping, TerminateOnNaN
+from tensorflow.keras.callbacks import EarlyStopping, TerminateOnNaN
+
+from data_generation.data_processing import process_data, prep_r_rollcall
+from data_generation.random_votes import generate_nominate_votes
 
 from leg_math.keras_helpers import GetBest, NNnominate
-from leg_math.data_processing import process_data
-from leg_math.random_votes import generate_nominate_votes
 
 from scipy import stats
 
@@ -19,6 +20,7 @@ from sklearn.metrics import log_loss, accuracy_score
 
 from constants import DATA_PATH
 
+# R imports for R integration
 import rpy2.robjects as robjects
 from rpy2.robjects import pandas2ri
 from rpy2.robjects.packages import importr
@@ -29,8 +31,25 @@ base = importr("base")
 pscl = importr("pscl")
 wnominate = importr("wnominate")
 
+SYNTHETIC_PATH = DATA_PATH + '/synthetic/'
 
-def get_probs_from_nominate(votes, ideal_points, yes_points, no_points, w, beta, cdf_type="logit"):
+
+def get_probs_from_nominate(votes, ideal_points, yes_points, no_points, w, beta, cdf_type="norm"):
+    '''Predict probabilities using the parameters estimated from a nominate style model
+
+    # Args:
+        votes (DataFrame): a list of votes to estimate probabilities, at a minimum requires a leg_id
+            vote_id, and a vote column
+        ideal_points (DataFrame): The estimated ideal points from a model, indexed by leg_id
+        yes_points (DataFrame): The estimated yes points from the a model, indexed by vote_id
+        no_points (DataFrame): The estimated no points from the a model, indexed by vote_id
+        w (np.arry): A vector of length d, where d is the number of dimensions in the model,
+            containing the estimated dimension salience weights
+        beta (float): The estimated model parameter on the nominate term
+        cdf_type (str): The cdf function to use, supported values are "norm" and "logit"
+    # Returns:
+        temp_data (DataFrame): A data frame of predicted probabilities
+    '''
     temp_data = pd.merge(votes, ideal_points, left_on="leg_id", right_index=True)
     temp_data = pd.merge(temp_data, yes_points, left_on="vote_id", right_index=True)
     temp_data = pd.merge(temp_data, no_points, left_on="vote_id", right_index=True)
@@ -56,28 +75,29 @@ def get_probs_from_nominate(votes, ideal_points, yes_points, no_points, w, beta,
     temp_data[temp_data.isnull().any(axis=1)].transpose()
 
     assert not temp_data.isnull().any().any(), "missing values in temp_data"
-    temp_data["vote_prob"].hist()
     return temp_data[["leg_id", "vote_id", "vote", "vote_prob"]]
 
 
-# Call generate random votes to ensure data exists
-data_type = "votes"
-if data_type == "test":
+# Load synthetic votes
+use_cached_votes = True
+if use_cached_votes:
+    vote_df = pd.read_feather(SYNTHETIC_PATH + "/test_votes_df_norm.feather")
+else:
     random_votes = generate_nominate_votes(w=np.array([1.5, 0.75, 0.75]))
     random_votes = random_votes.reset_index()
-    random_votes = random_votes.rename(columns={"bill_id": "vote_id"})
-    random_votes["init_value"] = random_votes["partyCode"].map({100: -1, 200: 1})
     vote_df = random_votes.copy()
-if data_type == "votes":
-    vote_df = pd.read_feather(DATA_PATH + "vote_df_cleaned.feather")
-    # Limit to senate for now
-    vote_df = vote_df[vote_df["chamber"] == "Senate"]
+# if data_type == "votes":
+#     vote_df = pd.read_feather(DATA_PATH + "vote_df_cleaned.feather")
+#     # Limit to senate for now
+#     vote_df = vote_df[vote_df["chamber"] == "Senate"]
 
-print("Get wnominate estimate")
+# print("Get wnominate estimate")
+# Old way: run an R script
 # robjects.r['source']("./leg_math/test_data_in_r.R")
+# Better way, directly interact with R (below)
 
 i = 3
-top_dim = 8
+top_dim = 7
 
 metrics_list = []
 for i in range(1, top_dim):
@@ -85,16 +105,25 @@ for i in range(1, top_dim):
     # wnom.rx2("legislators")
 
     print("Get nn_estimate")
+    # Process the vote_df into the model data format
     data_params = dict(
-                   data_type=vote_df,
+                   vote_df=vote_df,
                    congress_cutoff=112,
                    k_dim=i,
                    k_time=0,
                    covariates_list=[],
                    )
-    vote_data = process_data(**data_params, return_vote_df=False)
-    # vote_data, vote_df = process_data(**data_params, return_vote_df=True)
-    assert not vote_df.duplicated(["leg_id", "vote_id"]).any(), "Duplicated vote id pairs!"
+    vote_data = process_data(**data_params)
+
+    # Cache some objects for use in R later
+    roll_call = prep_r_rollcall(vote_data)
+
+    leg_info_cols = ["leg_id", "partyCode", "icpsrState"] + [f"coord{i}D" for i in range(1, 4)]
+    leg_data = vote_df[leg_info_cols].drop_duplicates()
+
+    vote_info_cols = ["vote_id", "congress"] + [f"yes_coord{i}D" for i in range(1, 4)] + [f"no_coord{i}D" for i in range(1, 4)]
+    vote_metadata = vote_df[vote_info_cols].drop_duplicates()
+
     model_params = {
                     "n_leg": vote_data["J"],
                     "n_votes": vote_data["M"],
@@ -103,28 +132,33 @@ for i in range(1, top_dim):
                     "init_leg_embedding": vote_data["init_embedding"],
                     "yes_point_dropout": 0.0,
                     "no_point_dropout": 0.0,
-                    "combined_dropout": 0.5,
+                    "combined_dropout": 0.25,
                     "dropout_type": "timestep",
                     "covariates_list": data_params["covariates_list"],
                     }
 
     model = NNnominate(**model_params)
-    model.summary()
 
-    SVG(model_to_dot(model).create(prog='dot', format='svg'))
+    # model.summary()
+    # SVG(model_to_dot(model).create(prog='dot', format='svg'))
 
     # model.compile(loss='mse', optimizer='adamax')
     model.compile(loss='binary_crossentropy', optimizer='Nadam', metrics=['accuracy'])
 
-    sample_weights = (1.0 * vote_data["y_train"].shape[0]) / (len(np.unique(vote_data["y_train"])) * np.bincount(vote_data["y_train"]))
+    # Weights are probably better, but not in original so comment out here
+    weight_by_frequency = False
+    if weight_by_frequency:
+        sample_weights = (1.0 * vote_data["y_train"].shape[0]) / (len(np.unique(vote_data["y_train"])) * np.bincount(vote_data["y_train"]))
+    else:
+        sample_weights = {k: 1 for k in np.unique(vote_data["y_train"])}
 
-    callbacks = [EarlyStopping('val_loss', patience=100),
-                 GetBest(monitor='val_loss', verbose=1, mode='auto'),
+    callbacks = [EarlyStopping('val_loss', patience=20, restore_best_weights=True),
+                 # GetBest(monitor='val_loss', verbose=1, mode='auto'),
                  TerminateOnNaN()]
     if data_params["covariates_list"]:
         if data_params["k_time"] > 0:
             x_train = [vote_data["j_train"], vote_data["m_train"]] + vote_data["time_passed_train"] + [vote_data["covariates_train"]]
-            x_test = [vote_data["j_test"], vote_data["m_test"]] + vote_data["time_passed_test"]+ [vote_data["covariates_test"]]
+            x_test = [vote_data["j_test"], vote_data["m_test"]] + vote_data["time_passed_test"] + [vote_data["covariates_test"]]
         else:
             x_train = [vote_data["j_train"], vote_data["m_train"]] + [vote_data["covariates_train"]]
             x_test = [vote_data["j_test"], vote_data["m_test"]] + [vote_data["covariates_test"]]
@@ -136,7 +170,7 @@ for i in range(1, top_dim):
             x_train = [vote_data["j_train"], vote_data["m_train"]]
             x_test = [vote_data["j_test"], vote_data["m_test"]]
     history = model.fit(x_train, vote_data["y_train"], epochs=5000, batch_size=32768,
-                        validation_data=(x_test, vote_data["y_test"]), verbose=2, callbacks=callbacks,
+                        validation_data=(x_test, vote_data["y_test"]), verbose=1, callbacks=callbacks,
                         class_weight={0: sample_weights[0],
                                       1: sample_weights[1]})
 
@@ -184,25 +218,28 @@ for i in range(1, top_dim):
                                  "log_loss": log_loss(test_results["vote"], test_results["vote_prob"]),
                                  "accuracy_score": accuracy_score(test_results["vote"], 1 * (test_results["vote_prob"] > 0.5))})
 
-    roll_call = train_df.copy()
-    # roll_call.set_index(["leg_id", "vote_id"])["vote"].unstack().notnull().sum(axis=0)
-    roll_call["vote"] = roll_call["vote"].map({1: 1, 0: 6})
-    roll_call = roll_call.set_index(["leg_id", "vote_id"])["vote"].unstack()
-    roll_call = roll_call.fillna(9).astype(int)
-    # roll_call.to_csv(DATA_PATH + "/test_votes.csv")
-    # leg_data.to_csv(DATA_PATH + "/test_legislators.csv")
-    (roll_call.iloc[:, -5:] != 9).describe()
+    # roll_call = train_df.copy()
+    # # roll_call.set_index(["leg_id", "vote_id"])["vote"].unstack().notnull().sum(axis=0)
+    # roll_call["vote"] = roll_call["vote"].map({1: 1, 0: 6})
+    # roll_call = roll_call.set_index(["leg_id", "vote_id"])["vote"].unstack()
+    # roll_call = roll_call.fillna(9).astype(int)
+    # # roll_call.to_csv(DATA_PATH + "/test_votes.csv")
+    # # leg_data.to_csv(DATA_PATH + "/test_legislators.csv")
+    # (roll_call.iloc[:, -5:] != 9).describe()
 
-    roll_call_mat = base.as_matrix(pandas2ri.py2ri(roll_call))
+    roll_call_mat = base.as_matrix(roll_call)
+    # roll_call_mat = base.as_matrix(pandas2ri.py2ri(roll_call))
 
-    if data_type == "test":
-        leg_data = pd.read_csv("~/data/leg_math/test_legislators.csv")
-        leg_data.columns = ["true_" + str(col) if "coord" in col else col for col in leg_data.columns]
-    if data_type == "votes":
-        leg_data = pd.read_feather(DATA_PATH + "leg_data.feather")
-        leg_data = leg_data[["leg_id", "state_abbrev", "bioname", "party_code"]].drop_duplicates().set_index("leg_id")
-        # leg_data = leg_data.[leg_data["leg_id"].isin(train_df["leg_id"].values)]
-        leg_data = leg_data.loc[roll_call.index.values, :]
+    # if data_type == "test":
+    #     leg_data = pd.read_csv("~/data/leg_math/test_legislators.csv")
+
+    leg_data.columns = ["true_" + str(col) if "coord" in col else col for col in leg_data.columns]
+
+    # if data_type == "votes":
+    #     leg_data = pd.read_feather(DATA_PATH + "leg_data.feather")
+    #     leg_data = leg_data[["leg_id", "state_abbrev", "bioname", "party_code"]].drop_duplicates().set_index("leg_id")
+    #     # leg_data = leg_data.[leg_data["leg_id"].isin(train_df["leg_id"].values)]
+    #     leg_data = leg_data.loc[roll_call.index.values, :]
 
     r_data = pscl.rollcall(roll_call_mat, yea=1, nay=6, notInLegis=9, missing=np.nan,
                            legis_names=roll_call.index,
@@ -211,7 +248,7 @@ for i in range(1, top_dim):
                            # vote_data=pd.DataFrame(roll_call.columns, columns=["vote_id"]),
                            )
     wnom = wnominate.wnominate(r_data, polarity=base.seq(1, i), dims=i)
-    wnom
+    base.summary(wnom)
 
     k_dim = data_params["k_dim"]
     k_time = data_params["k_time"]
@@ -226,16 +263,16 @@ for i in range(1, top_dim):
     #         leg_data = leg_data.reset_index()
     leg_data
 
-    wnom_votes = pandas2ri.ri2py(wnom.rx2("rollcalls"))
+    wnom_votes = wnom.rx2("rollcalls")
     base.rownames(wnom.rx2("rollcalls"))
     wnom_votes.index = roll_call.columns
     wnom_votes[wnom_votes.isnull().any(axis=1)]
-    train_df[train_df["vote_id"] == "115s_0468"]
+
     for i in range(1, k_dim + 1):
         wnom_votes[f"yes_coord{i}D"] = wnom_votes[f"midpoint{i}D"] - (wnom_votes[f"spread{i}D"] / 2)
         wnom_votes[f"no_coord{i}D"] = wnom_votes[f"midpoint{i}D"] + (wnom_votes[f"spread{i}D"] / 2)
 
-    r_ideal_points = pandas2ri.ri2py(wnom.rx2("legislators"))
+    r_ideal_points = wnom.rx2("legislators")
     # r_ideal_points.groupby("party_code")["coord1D"].agg(["mean", "std"])
     # r_ideal_points = leg_data.set_index("leg_id")[[f"coord{i}D" for i in range(1, k_dim + 1)]]
     # r_ideal_points.columns = [f"coord{i}D" for i in range(1, k_dim + 1)]
@@ -248,7 +285,6 @@ for i in range(1, top_dim):
                                             w=np.array(wnom.rx2("weights")),
                                             beta=np.array(wnom.rx2("beta")),
                                             cdf_type="norm")
-    train_results[train_results["vote_id"] == "115s_0468"]
 
     test_results = get_probs_from_nominate(test_df,
                                            ideal_points=r_ideal_points,
@@ -277,7 +313,7 @@ for i in range(1, top_dim):
     combined_ideal = pd.merge(ideal_points, r_ideal_points,
                               left_index=True, right_index=True,
                               suffixes=("_nn", "_wnom"))
-    combined_ideal.to_pickle(DATA_PATH + f"{data_type}_{k_dim}_combined_ideal_data.pkl")
+    combined_ideal.to_pickle(SYNTHETIC_PATH + f"synthetic_{k_dim}_combined_ideal_data.pkl")
     # sns.pairplot(combined_ideal.filter(regex=r"coord\dD_"), size=3, diag_kind="kde", plot_kws={'alpha': 0.5})
     # def corrfunc(x, y, **kws):
     #     r, _ = stats.pearsonr(x, y)
@@ -286,9 +322,9 @@ for i in range(1, top_dim):
     # g = sns.pairplot(combined_ideal.filter(regex=r"coord\dD_nn|true_coord"), size=3, diag_kind="kde", plot_kws={'alpha': 0.5}); g.map_lower(corrfunc)
 
 final_metrics = pd.concat(metrics_list)
-final_metrics.to_pickle(DATA_PATH + f"{data_type}_data_metrics.pkl")
+final_metrics.to_pickle(DATA_PATH + f"test_data_metrics.pkl")
 
-final_metrics = pd.read_pickle(DATA_PATH + f"{data_type}_data_metrics.pkl")
+final_metrics = pd.read_pickle(DATA_PATH + f"test_data_metrics.pkl")
 print(final_metrics.set_index(["k_dim", "algorithm", "dataset"]).unstack(level=["algorithm", "dataset"]))
 
 import seaborn as sns
@@ -297,7 +333,7 @@ import matplotlib.pyplot as plt
 # plot_data = final_metrics[final_metrics["algorithm"] == "nn"].set_index(["k_dim", "dataset"])["log_loss"].unstack("dataset").reset_index()
 # plot_data = final_metrics.set_index(["k_dim", "dataset"])["log_loss"].reset_index()
 
-final_metrics = pd.read_pickle(DATA_PATH + f"{data_type}_data_metrics.pkl")
+final_metrics = pd.read_pickle(DATA_PATH + f"test_data_metrics.pkl")
 plot_data = final_metrics.set_index(["k_dim", "algorithm", "dataset"]).unstack(level=["algorithm", "dataset"]).unstack().reset_index()
 plot_data = plot_data.rename(columns={"level_0": "metric", 0: "score"})
 plot_data["Model"] = plot_data["algorithm"] + "_" + plot_data["dataset"]
@@ -307,15 +343,12 @@ plot_data["Model"] = plot_data["Model"].map({"nn_train": "NN-NOMINATE (train)",
                                              "wnominate_test": "WNOMINATE (test)"})
 # plot_data = plot_data[plot_data["metric"] == "log_loss"]
 
-ax = sns.tsplot(data=plot_data[(plot_data["metric"] == "log_loss")],
-                time="k_dim", unit="Model", condition="Model", value="score",
-                err_style=None, marker="o")
-ax = sns.tsplot(data=plot_data[(plot_data["metric"] == "log_loss") & (plot_data["algorithm"] == "wnominate")],
-                time="k_dim", unit="Model", condition="Model", value="score",
-                err_style=None, marker="^")
-ax = sns.tsplot(data=plot_data[(plot_data["metric"] == "log_loss") & (plot_data["algorithm"] == "nn")],
-                time="k_dim", unit="algo_data", condition="Model", value="score",
-                err_style=None, marker="o")
+ax = sns.lineplot(data=plot_data[(plot_data["metric"] == "log_loss")],
+                  x="k_dim", y="score", estimator=None, hue="Model", marker="o")
+ax = sns.lineplot(data=plot_data[(plot_data["metric"] == "log_loss") & (plot_data["algorithm"] == "wnominate")],
+                  x="k_dim", y="score", estimator=None, hue="Model", marker="^")
+ax = sns.lineplot(data=plot_data[(plot_data["metric"] == "log_loss") & (plot_data["algorithm"] == "nn")],
+                  x="k_dim", y="score", estimator=None, hue="Model", marker="^")
 ax.set(xlim=(0.9, 5.1), xticks=range(1, top_dim))
 fig = ax.get_figure()
 fig.show()

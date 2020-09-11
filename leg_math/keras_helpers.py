@@ -424,7 +424,7 @@ def NNnominate(n_leg, n_votes,
                              # embeddings_constraint=unit_norm(),
                              # embeddings_constraint=UnitSphere(),
                              # embeddings_constraint=UnitMetric(axis=1),
-                             embeddings_constraint=MinMaxNorm(min_value=0.0, max_value=1.0, axis=1, rate=1.0),
+                             # embeddings_constraint=MinMaxNorm(min_value=0.0, max_value=1.0, axis=1, rate=1.0),
                              weights=[init_leg_embedding.values],
                              )(leg_input)
     # Dropout regularization of the ideal points

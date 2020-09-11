@@ -6,31 +6,19 @@ import pandas as pd
 
 from scipy import stats
 
-from data_generation.data_processing import drop_unanimous
+from data_generation.data_processing import drop_unanimous, process_data, prep_r_rollcall
 
 from constants import DATA_PATH
 
-n_leg = 100
-n_votes = 2000
-k_dim = 3
-
-beta_covar = 0.1
-
-# w = np.repeat(0.5, k_dim)
-w = np.array([1.0, 0.5, 0.5])
-# Impose sum to one
-# w = w / w.sum()
-beta = 15.0
-
-cdf_type = "norm"
+SYNTHETIC_PATH = DATA_PATH + '/synthetic/'
 
 
 def generate_nominate_votes(n_leg=100,
                             n_votes=2000,
                             k_dim=3,
-                            beta_covar=0.0,
                             w=np.array([1.0, 0.5, 0.5]),
                             beta=15.0,
+                            beta_covar=0.0,
                             cdf_type="norm",
                             drop_unanimous_votes=True,
                             replication_seed=None):
@@ -72,10 +60,12 @@ def generate_nominate_votes(n_leg=100,
     ideal_points.index.name = "leg_id"
     # Randomly assign party
     ideal_points["partyCode"] = np.random.choice([100, 200], size=(n_leg,))
+    # Definte initial values  based on party
+    ideal_points["init_value"] = ideal_points["partyCode"].map({100: -1, 200: 1})
     # Dummy state column
     ideal_points["icpsrState"] = 10
     # Make 1st dimension party
-    ideal_points["coord1D"] = ideal_points["coord1D"] * ideal_points["partyCode"].map({100: -1, 200: 1})
+    ideal_points["coord1D"] = ideal_points["coord1D"] * ideal_points["init_value"]
     # Randomly assign other dimensions
     if k_dim > 1:
         for i in range(2, k_dim + 1):
@@ -123,6 +113,7 @@ def generate_nominate_votes(n_leg=100,
     # NOTE: Turns out that the assumption is on the difference of the error terms
     error = np.random.normal(0, np.sqrt(1 / beta), size=len(votes))
 
+    # Generate a covariate for being a member of the party in power
     votes["party_in_power"] = 100
     votes["congress"] = 114
     bill_numbers = votes["vote_id"].str.split("_").str.get(1).astype(int)
@@ -153,12 +144,25 @@ def generate_nominate_votes(n_leg=100,
 
 if __name__ == '__main__':
     votes = generate_nominate_votes(beta=5.0, cdf_type="norm", replication_seed=42)
-    votes.reset_index().to_feather(DATA_PATH + "/test_votes_df_norm.feather")
+    votes.reset_index().to_feather(SYNTHETIC_PATH + "/test_votes_df_norm.feather")
 
     votes = generate_nominate_votes(beta=5.0, cdf_type="logit", replication_seed=42)
-    votes.reset_index().to_feather(DATA_PATH + "/test_votes_df_logit.feather")
+    votes.reset_index().to_feather(SYNTHETIC_PATH + "/test_votes_df_logit.feather")
 
     votes = generate_nominate_votes(beta=5.0, beta_covar=5.0, cdf_type="logit", replication_seed=42)
-    votes.reset_index().to_feather(DATA_PATH + "/test_votes_df_covar.feather")
+    votes.reset_index().to_feather(SYNTHETIC_PATH + "/test_votes_df_covar.feather")
 
-    # pd.testing.assert_frame_equal(votes.reset_index(), votes_temp)
+    vote_df = pd.read_feather(SYNTHETIC_PATH + "/test_votes_df_norm.feather")
+
+    vote_data = process_data(vote_df)
+    roll_call = prep_r_rollcall(vote_data)
+
+    leg_info_cols = ["leg_id", "partyCode", "icpsrState"] + [f"coord{i}D" for i in range(1, 4)]
+    leg_data = vote_df[leg_info_cols].drop_duplicates()
+
+    vote_info_cols = ["vote_id", "congress"] + [f"yes_coord{i}D" for i in range(1, 4)] + [f"no_coord{i}D" for i in range(1, 4)]
+    vote_metadata = vote_df[vote_info_cols].drop_duplicates()
+
+    roll_call.to_csv(SYNTHETIC_PATH + "/test_votes.csv")
+    leg_data.to_csv(SYNTHETIC_PATH + "/test_legislators.csv", index=False)
+    vote_metadata.to_csv(SYNTHETIC_PATH + "/test_vote_metadata.csv", index=False)

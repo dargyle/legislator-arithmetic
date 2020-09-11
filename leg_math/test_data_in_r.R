@@ -1,4 +1,8 @@
 library(wnominate)
+library(feather)
+library(pscl)
+
+# Install dwnominate package
 
 # n_leg = 50
 # n_votes = 500
@@ -35,14 +39,17 @@ library(wnominate)
 
 roll_call_mat = read.csv("~/data/leg_math/test_votes.csv", header=TRUE, row.names=1)
 legis.data = read.csv("~/data/leg_math/test_legislators.csv", header=TRUE, row.names=1)
+vote.data = read.csv("~/data/leg_math/test_vote_metadata.csv", header=TRUE, row.names=1)
+
 for (i in seq(1, 3)){
     colnames(legis.data)[colnames(legis.data)==paste(c("coord", i, "D"), collapse="")] = paste(c("true_coord", i, "D"), collapse="")
 }
 
 test_data = rollcall(as.matrix(roll_call_mat), yea=1, nay=6, notInLegis=9,
                      legis.names = rownames(legis.data),
-                     legis.data = as.matrix(legis.data),
-                     vote.names = colnames(roll_call_mat)
+                     legis.data = legis.data,
+                     vote.names = colnames(roll_call_mat),
+                     vote.data = vote.data,
                      )
 
 wnom1 = wnominate(test_data, polarity=c(1), dims=1, lop=0.01, minvotes=2)
@@ -69,3 +76,8 @@ wnom5 = wnominate(test_data, polarity=c(1, 2, 3, 4, 5), dims=5)
 rownames(wnom5$rollcalls) = colnames(test_data$votes)
 write.csv(wnom5$legislators, file="~/data/leg_math/wnom5D_results.csv")
 write.csv(wnom5$rollcalls, file="~/data/leg_math/wnom5D_rollcalls.csv")
+
+
+
+asdf = ideal(test_data, d=1, normalize=TRUE, impute=TRUE, store.item=TRUE)
+zxcv = idealToMCMC(asdf)
