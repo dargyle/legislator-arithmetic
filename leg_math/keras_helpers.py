@@ -7,6 +7,8 @@ import pickle
 import warnings
 
 import tensorflow as tf
+import tensorflow_probability as tfp
+
 from tensorflow import keras
 from tensorflow.keras.layers import Embedding, Reshape, Dropout, SpatialDropout1D, Dense, Flatten, Input, Dot, LSTM, Add, Subtract, Conv1D, MaxPooling1D, Concatenate, Multiply, BatchNormalization, Lambda, Activation, InputSpec
 from tensorflow.keras.models import Sequential, Model
@@ -355,7 +357,7 @@ def generate_time_layer(i, n_leg, k_dim, leg_input, time_input):
 def normal_activation(x):
     """Use a standard normal cdf as the activation function
     """
-    dist = tf.distributions.Normal(loc=0.0, scale=1.0)
+    dist = tfp.distributions.Normal(loc=0.0, scale=1.0)
     get_custom_objects().update({'normal_activation': Activation(normal_activation)})
     return dist.cdf(x)
 
@@ -375,6 +377,7 @@ def NNnominate(n_leg, n_votes,
                dropout_type="timestep",
                covariates_list=[],
                k_out=1,
+               main_activation='sigmoid',
                ):
     """A function to build a dwnominate style neural network
 
@@ -397,6 +400,8 @@ def NNnominate(n_leg, n_votes,
             will be dropped
         covariates_list (list), EXPERIMENTAL: a list of covariate names to
             initialize addition of covariates to the model
+        main_activation (str), EXPERIMENTAL: activation function to use for
+            main layer, possible values ["sigmoid", "guassian"]
     # Returns:
         A keras model ready for compilation and fit
     """
@@ -485,7 +490,7 @@ def NNnominate(n_leg, n_votes,
     combined = JointWnomTerm(output_dim=1, trainable=True, name="wnom_term",
                              kernel_constraint=non_neg(),
                              # kernel_constraint=SumToOne(),
-                             # kernel_regularizer=regularizers.l2(1e-2),
+                             # kernel_regularizer=regularizers.l2(),
                              )([flat_ideal_points, flat_yes_point, flat_no_point])
     # Combined dropout regularization
     # Setting this sets salience weights for a random dimension to 0
@@ -499,7 +504,10 @@ def NNnominate(n_leg, n_votes,
         combined = Concatenate()([combined, covariates])
 
     # Final output, a simple logistic layer
-    main_output = Dense(k_out, activation="sigmoid", name="main_output", use_bias=False, kernel_initializer=Constant(1))(combined)
+    if main_activation == "sigmoid":
+        main_output = Dense(k_out, activation="sigmoid", name="main_output", use_bias=False, kernel_initializer=Constant(1))(combined)
+    elif main_activation == "gaussian":
+        main_output = Dense(k_out, activation=normal_activation, name="main_output", use_bias=False, kernel_initializer=Constant(1))(combined)
 
     # Define model, depending on existence of covariates and time elements
     if covariates_list:

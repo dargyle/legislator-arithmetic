@@ -132,9 +132,10 @@ for i in range(1, top_dim):
                     "init_leg_embedding": vote_data["init_embedding"],
                     "yes_point_dropout": 0.0,
                     "no_point_dropout": 0.0,
-                    "combined_dropout": 0.25,
+                    "combined_dropout": 0.5,
                     "dropout_type": "timestep",
                     "covariates_list": data_params["covariates_list"],
+                    "main_activation": "gaussian",
                     }
 
     model = NNnominate(**model_params)
@@ -170,9 +171,12 @@ for i in range(1, top_dim):
             x_train = [vote_data["j_train"], vote_data["m_train"]]
             x_test = [vote_data["j_test"], vote_data["m_test"]]
     history = model.fit(x_train, vote_data["y_train"], epochs=5000, batch_size=32768,
-                        validation_data=(x_test, vote_data["y_test"]), verbose=1, callbacks=callbacks,
+                        validation_data=(x_test, vote_data["y_test"]), verbose=2, callbacks=callbacks,
                         class_weight={0: sample_weights[0],
                                       1: sample_weights[1]})
+
+    valid_weight_count = ~np.isclose(model.get_layer("wnom_term").get_weights()[0], 0)
+    assert valid_weight_count.sum() == model_params["k_dim"], "Dimension mismatch"
 
     train_df = np.stack([vote_data["j_train"],
                          vote_data["m_train"],
@@ -305,10 +309,11 @@ for i in range(1, top_dim):
                                         "log_loss": log_loss(test_results["vote"], test_results["vote_prob"]),
                                         "accuracy_score": accuracy_score(test_results["vote"], 1 * (test_results["vote_prob"] > 0.5))})
 
-    metrics_list += [pd.concat([nn_train_metrics,
-                                nn_test_metrics,
-                                wnominate_train_metrics,
-                                wnominate_test_metrics], axis=1).transpose()]
+    combined_metrics = pd.concat([nn_train_metrics,
+                                  nn_test_metrics,
+                                  wnominate_train_metrics,
+                                  wnominate_test_metrics], axis=1).transpose()
+    metrics_list += [combined_metrics]
 
     combined_ideal = pd.merge(ideal_points, r_ideal_points,
                               left_index=True, right_index=True,
