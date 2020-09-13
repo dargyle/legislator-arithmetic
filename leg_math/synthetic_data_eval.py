@@ -7,12 +7,15 @@ import pickle
 from IPython.display import SVG
 from tensorflow.keras.utils import model_to_dot
 
-from tensorflow.keras.callbacks import EarlyStopping, TerminateOnNaN
+from tensorflow.keras.callbacks import EarlyStopping, TerminateOnNaN, ModelCheckpoint
+
+import tensorflow as tf
+import tensorflow_probability as tfp
 
 from data_generation.data_processing import process_data, prep_r_rollcall
 from data_generation.random_votes import generate_nominate_votes
 
-from leg_math.keras_helpers import GetBest, NNnominate
+from leg_math.keras_helpers import GetBest, NNnominate, function_factory
 
 from scipy import stats
 
@@ -96,11 +99,11 @@ else:
 # robjects.r['source']("./leg_math/test_data_in_r.R")
 # Better way, directly interact with R (below)
 
-i = 3
+d = 3
 top_dim = 7
 
 metrics_list = []
-for i in range(1, top_dim):
+for d in range(1, top_dim):
     # wnom = robjects.r[f"wnom{i}"]
     # wnom.rx2("legislators")
 
@@ -109,7 +112,7 @@ for i in range(1, top_dim):
     data_params = dict(
                    vote_df=vote_df,
                    congress_cutoff=112,
-                   k_dim=i,
+                   k_dim=d,
                    k_time=0,
                    covariates_list=[],
                    )
@@ -138,23 +141,15 @@ for i in range(1, top_dim):
                     "main_activation": "gaussian",
                     }
 
-    model = NNnominate(**model_params)
-
-    # model.summary()
-    # SVG(model_to_dot(model).create(prog='dot', format='svg'))
-
-    # model.compile(loss='mse', optimizer='adamax')
-    model.compile(loss='binary_crossentropy', optimizer='Nadam', metrics=['accuracy'])
-
-    # Weights are probably better, but not in original so comment out here
     weight_by_frequency = False
     if weight_by_frequency:
         sample_weights = (1.0 * vote_data["y_train"].shape[0]) / (len(np.unique(vote_data["y_train"])) * np.bincount(vote_data["y_train"]))
     else:
         sample_weights = {k: 1 for k in np.unique(vote_data["y_train"])}
 
-    callbacks = [EarlyStopping('val_loss', patience=20, restore_best_weights=True),
+    callbacks = [# EarlyStopping('val_loss', patience=20, restore_best_weights=True),
                  # GetBest(monitor='val_loss', verbose=1, mode='auto'),
+                 ModelCheckpoint(DATA_PATH + '/temp/model_weights_{epoch:02d}.hdf5'),
                  TerminateOnNaN()]
     if data_params["covariates_list"]:
         if data_params["k_time"] > 0:
@@ -170,11 +165,125 @@ for i in range(1, top_dim):
         else:
             x_train = [vote_data["j_train"], vote_data["m_train"]]
             x_test = [vote_data["j_test"], vote_data["m_test"]]
-    history = model.fit(x_train, vote_data["y_train"], epochs=5000, batch_size=32768,
+
+
+    model = NNnominate(**model_params)
+
+    # model.summary()
+    # SVG(model_to_dot(model).create(prog='dot', format='svg'))
+
+    loss = tf.keras.losses.BinaryCrossentropy()
+    train_x = x_train
+    train_y = vote_data["y_train"].astype(float)
+
+    # func = function_factory(model, loss_fun, x_train, vote_data["y_train"])
+
+    # obtain the shapes of all trainable parameters in the model
+    shapes = tf.shape_n(model.trainable_variables)
+    n_tensors = len(shapes)
+
+    # we'll use tf.dynamic_stitch and tf.dynamic_partition later, so we need to
+    # prepare required information first
+    count = 0
+    idx = []  # stitch indices
+    part = []  # partition indices
+
+    for i, shape in enumerate(shapes):
+        n = np.product(shape)
+        idx.append(tf.reshape(tf.range(count, count+n, dtype=tf.int32), shape))
+        part.extend([i]*n)
+        count += n
+
+    part = tf.constant(part)
+
+    @tf.function
+    def assign_new_model_parameters(params_1d):
+        """A function updating the model's parameters with a 1D tf.Tensor.
+
+        Args:
+            params_1d [in]: a 1D tf.Tensor representing the model's trainable parameters.
+        """
+
+        params = tf.dynamic_partition(params_1d, part, n_tensors)
+        for i, (shape, param) in enumerate(zip(shapes, params)):
+            model.trainable_variables[i].assign(tf.reshape(param, shape))
+
+    # now create a function that will be returned by this factory
+    @tf.function
+    def f(params_1d):
+        """A function that can be used by tfp.optimizer.lbfgs_minimize.
+
+        This function is created by function_factory.
+
+        Args:
+           params_1d [in]: a 1D tf.Tensor.
+
+        Returns:
+            A scalar loss and the gradients w.r.t. the `params_1d`.
+        """
+
+        # use GradientTape so that we can calculate the gradient of loss w.r.t. parameters
+        with tf.GradientTape() as tape:
+            # update the parameters in the model
+            assign_new_model_parameters(params_1d)
+            # calculate the loss
+            loss_value = loss(pd.DataFrame(train_y).values, model(train_x, training=True))
+
+        # calculate gradients and convert to 1D tf.Tensor
+        grads = tape.gradient(loss_value, model.trainable_variables)
+        grads = tf.dynamic_stitch(idx, grads)
+
+        # print out iteration & loss
+        f.iter.assign_add(1)
+        tf.print("Iter:", f.iter, "loss:", loss_value)
+
+        # store loss value so we can retrieve later
+        tf.py_function(f.history.append, inp=[loss_value], Tout=[])
+
+        return loss_value, grads
+
+    # store these information as members so we can use them outside the scope
+    f.iter = tf.Variable(0)
+    f.idx = idx
+    f.part = part
+    f.shapes = shapes
+    f.assign_new_model_parameters = assign_new_model_parameters
+    f.history = []
+
+    # convert initial model parameters to a 1D tf.Tensor
+    init_params = tf.dynamic_stitch(f.idx, model.trainable_variables)
+
+    # train the model with L-BFGS solver
+    results = tfp.optimizer.lbfgs_minimize(
+        value_and_gradients_function=f, initial_position=init_params, max_iterations=500)
+
+    # after training, the final optimized parameters are still in results.position
+    # so we have to manually put them back to the model
+    f.assign_new_model_parameters(results.position)
+
+    # do some prediction
+    pred_outs = model.predict(x_train)
+    pred_outs.shape
+
+
+
+
+
+    # model.compile(loss='mse', optimizer='adamax')
+    # model.compile(loss='binary_crossentropy', optimizer='Nadam', metrics=['accuracy'])
+    opt = tf.keras.optimizers.Nadam()
+    # opt = tfp.optimizer.VariationalSGD(batch_size=32768, total_num_examples=vote_data["N"])
+    model.compile(loss='binary_crossentropy', optimizer=opt, metrics=['accuracy'])
+
+    # Weights are probably better, but not in original so comment out here
+    history = model.fit(x_train, vote_data["y_train"],  epochs=1000, batch_size=1000,
                         validation_data=(x_test, vote_data["y_test"]), verbose=2, callbacks=callbacks,
                         class_weight={0: sample_weights[0],
                                       1: sample_weights[1]})
 
+    opt.iterations
+    opt.weights
+    np.log(model.get_layer("wnom_term").get_weights()[0])
     valid_weight_count = ~np.isclose(model.get_layer("wnom_term").get_weights()[0], 0)
     assert valid_weight_count.sum() == model_params["k_dim"], "Dimension mismatch"
 
@@ -195,6 +304,32 @@ for i in range(1, top_dim):
     train_metrics
     test_metrics = model.evaluate(x_test, vote_data["y_test"], batch_size=10000)
     test_metrics
+
+
+    model_to_load = "999"
+    model.load_weights(DATA_PATH + f'/temp/model_weights_{model_to_load}.hdf5')
+    model.evaluate(x_train, vote_data["y_train"], batch_size=10000)
+    model.evaluate(x_test, vote_data["y_test"], batch_size=10000)
+    np.log(model.get_layer("wnom_term").get_weights()[0])
+    asdf1 = model.get_layer("ideal_points").get_weights()[0]
+
+    model_to_load = "1000"
+    model.load_weights(DATA_PATH + f'/temp/model_weights_{model_to_load}.hdf5')
+    model.evaluate(x_train, vote_data["y_train"], batch_size=10000)
+    model.evaluate(x_test, vote_data["y_test"], batch_size=10000)
+    np.log(model.get_layer("wnom_term").get_weights()[0])
+    asdf2 = model.get_layer("ideal_points").get_weights()[0]
+
+
+    param_list = []
+    for k in range(500, 1000):
+        model_to_load = str(k)
+        model.load_weights(DATA_PATH + f'/temp/model_weights_{model_to_load}.hdf5')
+        param_list += [model.get_layer("ideal_points").get_weights()[0]]
+    np.mean(param_list, axis=0)
+    np.std(param_list, axis=0)
+
+    pd.Series(np.array([d[5, 0] for d in param_list])).autocorr(lag=1)
 
     k_dim = i
     ideal_points = pd.DataFrame(model.get_layer("ideal_points").get_weights()[0],

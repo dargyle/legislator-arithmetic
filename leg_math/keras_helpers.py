@@ -429,7 +429,7 @@ def NNnominate(n_leg, n_votes,
                              # embeddings_constraint=unit_norm(),
                              # embeddings_constraint=UnitSphere(),
                              # embeddings_constraint=UnitMetric(axis=1),
-                             # embeddings_constraint=MinMaxNorm(min_value=0.0, max_value=1.0, axis=1, rate=1.0),
+                             embeddings_constraint=MinMaxNorm(min_value=0.0, max_value=1.0, axis=1, rate=1.0),
                              weights=[init_leg_embedding.values],
                              )(leg_input)
     # Dropout regularization of the ideal points
@@ -459,8 +459,9 @@ def NNnominate(n_leg, n_votes,
     # Generate yes_point embedding layer
     yes_point = Embedding(input_dim=n_votes, output_dim=k_dim, input_length=1, name="yes_point",
                           # embeddings_constraint=MinMaxNorm(min_value=0.0, max_value=1.0, axis=1, rate=1.0),
-                          embeddings_initializer=TruncatedNormal(mean=0.0, stddev=0.3, seed=None),
-                          embeddings_regularizer=OrthReg(1e-1),
+                          # embeddings_initializer=TruncatedNormal(mean=0.0, stddev=0.05, seed=None),
+                          embeddings_initializer=tf.keras.initializers.Orthogonal(),
+                          # embeddings_regularizer=OrthReg(1e-1),
                           )(bill_input)
     # yes_point dropout regularization
     if yes_point_dropout > 0.0:
@@ -474,8 +475,9 @@ def NNnominate(n_leg, n_votes,
     # Generate no_point embedding layer
     no_point = Embedding(input_dim=n_votes, output_dim=k_dim, input_length=1, name="no_point",
                          # embeddings_constraint=MinMaxNorm(min_value=0.0, max_value=1.0, axis=1, rate=1.0),
-                         embeddings_initializer=TruncatedNormal(mean=0.0, stddev=0.3, seed=None),
-                         embeddings_regularizer=OrthReg(1e-1),
+                         # embeddings_initializer=TruncatedNormal(mean=0.0, stddev=0.05, seed=None),
+                         embeddings_initializer=tf.keras.initializers.Orthogonal(),
+                         # embeddings_regularizer=OrthReg(1e-1),
                          )(bill_input)
     # no_point dropout regularization
     if no_point_dropout > 0.0:
@@ -652,6 +654,97 @@ def NNitemresponse(n_leg, n_votes,
         else:
             model = Model(inputs=[leg_input, bill_input], outputs=[main_output])
     return model
+
+
+def function_factory(model, loss, train_x, train_y):
+    """A factory to create a function required by tfp.optimizer.lbfgs_minimize.
+
+    https://gist.github.com/piyueh/712ec7d4540489aad2dcfb80f9a54993
+
+    Args:
+        model [in]: an instance of `tf.keras.Model` or its subclasses.
+        loss [in]: a function with signature loss_value = loss(pred_y, true_y).
+        train_x [in]: the input part of training data.
+        train_y [in]: the output part of training data.
+
+    Returns:
+        A function that has a signature of:
+            loss_value, gradients = f(model_parameters).
+    """
+
+    # obtain the shapes of all trainable parameters in the model
+    shapes = tf.shape_n(model.trainable_variables)
+    n_tensors = len(shapes)
+
+    # we'll use tf.dynamic_stitch and tf.dynamic_partition later, so we need to
+    # prepare required information first
+    count = 0
+    idx = []  # stitch indices
+    part = []  # partition indices
+
+    for i, shape in enumerate(shapes):
+        n = np.product(shape)
+        idx.append(tf.reshape(tf.range(count, count+n, dtype=tf.int32), shape))
+        part.extend([i]*n)
+        count += n
+
+    part = tf.constant(part)
+
+    @tf.function
+    def assign_new_model_parameters(params_1d):
+        """A function updating the model's parameters with a 1D tf.Tensor.
+
+        Args:
+            params_1d [in]: a 1D tf.Tensor representing the model's trainable parameters.
+        """
+
+        params = tf.dynamic_partition(params_1d, part, n_tensors)
+        for i, (shape, param) in enumerate(zip(shapes, params)):
+            model.trainable_variables[i].assign(tf.reshape(param, shape))
+
+    # now create a function that will be returned by this factory
+    @tf.function
+    def f(params_1d):
+        """A function that can be used by tfp.optimizer.lbfgs_minimize.
+
+        This function is created by function_factory.
+
+        Args:
+           params_1d [in]: a 1D tf.Tensor.
+
+        Returns:
+            A scalar loss and the gradients w.r.t. the `params_1d`.
+        """
+
+        # use GradientTape so that we can calculate the gradient of loss w.r.t. parameters
+        with tf.GradientTape() as tape:
+            # update the parameters in the model
+            assign_new_model_parameters(params_1d)
+            # calculate the loss
+            loss_value = loss(model(train_x, training=True), train_y)
+
+        # calculate gradients and convert to 1D tf.Tensor
+        grads = tape.gradient(loss_value, model.trainable_variables)
+        grads = tf.dynamic_stitch(idx, grads)
+
+        # print out iteration & loss
+        f.iter.assign_add(1)
+        tf.print("Iter:", f.iter, "loss:", loss_value)
+
+        # store loss value so we can retrieve later
+        tf.py_function(f.history.append, inp=[loss_value], Tout=[])
+
+        return loss_value, grads
+
+    # store these information as members so we can use them outside the scope
+    f.iter = tf.Variable(0)
+    f.idx = idx
+    f.part = part
+    f.shapes = shapes
+    f.assign_new_model_parameters = assign_new_model_parameters
+    f.history = []
+
+    return f
 
 
 if __name__ == '__main__':
