@@ -7,7 +7,7 @@ import pickle
 from IPython.display import SVG
 from tensorflow.keras.utils import model_to_dot
 
-from tensorflow.keras.callbacks import EarlyStopping, TerminateOnNaN
+from tensorflow.keras.callbacks import EarlyStopping, TerminateOnNaN, ModelCheckpoint
 
 from data_generation.data_processing import process_data, prep_r_rollcall
 from data_generation.random_votes import generate_nominate_votes
@@ -153,8 +153,11 @@ for i in range(1, top_dim):
     else:
         sample_weights = {k: 1 for k in np.unique(vote_data["y_train"])}
 
-    callbacks = [EarlyStopping('val_loss', patience=20, restore_best_weights=True),
+    callbacks = [
+                 # EarlyStopping('val_loss', patience=20, restore_best_weights=True),
+                 EarlyStopping('val_loss', patience=50, restore_best_weights=True),
                  # GetBest(monitor='val_loss', verbose=1, mode='auto'),
+                 ModelCheckpoint(DATA_PATH + '/temp/model_weights_{epoch}.hdf5'),
                  TerminateOnNaN()]
     if data_params["covariates_list"]:
         if data_params["k_time"] > 0:
@@ -170,7 +173,7 @@ for i in range(1, top_dim):
         else:
             x_train = [vote_data["j_train"], vote_data["m_train"]]
             x_test = [vote_data["j_test"], vote_data["m_test"]]
-    history = model.fit(x_train, vote_data["y_train"], epochs=5000, batch_size=32768,
+    history = model.fit(x_train, vote_data["y_train"], epochs=5000, batch_size=1000,
                         validation_data=(x_test, vote_data["y_test"]), verbose=2, callbacks=callbacks,
                         class_weight={0: sample_weights[0],
                                       1: sample_weights[1]})
