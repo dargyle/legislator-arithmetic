@@ -180,11 +180,11 @@ def process_data(vote_df, congress_cutoff=0, k_dim=1, k_time=0,
     vote_data = {'J': len(leg_ids),
                  'M': len(vote_ids),
                  'N': N,
-                 'j_train': train_data["leg_id_num"].values,
-                 'j_test': test_data["leg_id_num"].values,
-                 'm_train': train_data["vote_id_num"].values,
-                 'm_test': test_data["vote_id_num"].values,
-                 'y_train': train_data["vote"].astype(int).values,
+                 'j_train': train_data[["leg_id_num"]].values,
+                 'j_test': test_data[["leg_id_num"]].values,
+                 'm_train': train_data[["vote_id_num"]].values,
+                 'm_test': test_data[["vote_id_num"]].values,
+                 'y_train': train_data[["vote"]].astype(int).values,
                  'y_test': test_data["vote"].astype(int).values,
                  'time_passed_train': time_passed_train,
                  'time_passed_test': time_passed_test,
@@ -229,17 +229,20 @@ def prep_r_rollcall(vote_data):
     # Returns:
         roll_call (DataFrame): Votes processed to match the r package pscl rollcall format
     '''
-    train_vote_df = pd.DataFrame({k: vote_data[k] for k in ['j_train', 'm_train', 'y_train']})
-    train_vote_df.columns = ["leg_id", "vote_id", "vote"]
+    train_df_list = [pd.DataFrame(vote_data[k], columns=[k]) for k in ['j_train', 'm_train', 'y_train']]
+    train_vote_df = pd.concat(train_df_list, axis=1)
+    train_vote_df = train_vote_df.rename(columns={"j_train": "leg_id", "m_train": "vote_id", "y_train": "vote"})
     train_vote_df["leg_id"] = train_vote_df["leg_id"].map(vote_data["leg_crosswalk"])
     train_vote_df["vote_id"] = train_vote_df["vote_id"].map(vote_data["vote_crosswalk"])
 
-    test_vote_df = pd.DataFrame({k: vote_data[k] for k in ['j_test', 'm_test', 'y_test']})
-    test_vote_df.columns = ["leg_id", "vote_id", "vote"]
+    test_df_list = [pd.DataFrame(vote_data[k], columns=[k]) for k in ['j_test', 'm_test', 'y_test']]
+    test_vote_df = pd.concat(test_df_list, axis=1)
+    test_vote_df = test_vote_df.rename(columns={"j_test": "leg_id", "m_test": "vote_id", "y_test": "vote"})
     test_vote_df["leg_id"] = test_vote_df["leg_id"].map(vote_data["leg_crosswalk"])
     test_vote_df["vote_id"] = test_vote_df["vote_id"].map(vote_data["vote_crosswalk"])
 
     roll_call = train_vote_df.set_index(["leg_id", "vote_id"])["vote"].map({1: 1, 0: 6}).unstack()
     roll_call = roll_call.fillna(9).astype(int)
+
 
     return roll_call

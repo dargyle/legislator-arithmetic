@@ -10,7 +10,7 @@ import tensorflow as tf
 import tensorflow_probability as tfp
 
 from tensorflow import keras
-from tensorflow.keras.layers import Embedding, Reshape, Dropout, SpatialDropout1D, Dense, Flatten, Input, Dot, LSTM, Add, Subtract, Conv1D, MaxPooling1D, Concatenate, Multiply, BatchNormalization, Lambda, Activation, InputSpec
+from tensorflow.keras.layers import Embedding, Reshape, Dropout, SpatialDropout1D, Dense, Flatten, Input, Dot, LSTM, Add, Subtract, Conv1D, MaxPooling1D, Concatenate, Multiply, BatchNormalization, Lambda, Activation, InputSpec, GaussianNoise
 from tensorflow.keras.models import Sequential, Model
 from tensorflow.keras.initializers import TruncatedNormal
 from tensorflow.keras import regularizers
@@ -286,6 +286,8 @@ class JointWnomTerm(Layer):
         super(JointWnomTerm, self).build(input_shape)  # Be sure to call this at the end
 
     def call(self, tlist):
+        # tf.print("Weights:", self.kernel)
+        tf.debugging.assert_positive(self.kernel)
         x = tlist[0]
         z1 = tlist[1]
         z2 = tlist[2]
@@ -375,6 +377,7 @@ def NNnominate(n_leg, n_votes,
                no_point_dropout=0.0,
                combined_dropout=0.0,
                dropout_type="timestep",
+               gaussian_noise=0.05,
                covariates_list=[],
                k_out=1,
                main_activation='sigmoid',
@@ -398,6 +401,8 @@ def NNnominate(n_leg, n_votes,
         dropout_type (str): if timestep, an entire bill/legislator will be
             dropped at random, otherwise, a constant fraction of all weights
             will be dropped
+        guassian_noise (float): stdev of the GaussianNoise layer, which randomly
+            perturbs parameters to avoid overfitting. Set to 0.0 to omit.
         covariates_list (list), EXPERIMENTAL: a list of covariate names to
             initialize addition of covariates to the model
         main_activation (str), EXPERIMENTAL: activation function to use for
@@ -455,12 +460,14 @@ def NNnominate(n_leg, n_votes,
 
     # Reshape to drop unecessary dimensions left from embeddings
     flat_ideal_points = Reshape((k_dim,))(main_ideal_points)
+    if gaussian_noise > 0.0:
+        flat_ideal_points = GaussianNoise(gaussian_noise)(flat_ideal_points)
 
     # Generate yes_point embedding layer
     yes_point = Embedding(input_dim=n_votes, output_dim=k_dim, input_length=1, name="yes_point",
                           # embeddings_constraint=MinMaxNorm(min_value=0.0, max_value=1.0, axis=1, rate=1.0),
                           embeddings_initializer=TruncatedNormal(mean=0.0, stddev=0.3, seed=None),
-                          embeddings_regularizer=OrthReg(1e-1),
+                          # embeddings_regularizer=OrthReg(1e-1),
                           )(bill_input)
     # yes_point dropout regularization
     if yes_point_dropout > 0.0:
@@ -470,12 +477,14 @@ def NNnominate(n_leg, n_votes,
             yes_point = Dropout(yes_point_dropout, seed=65)(yes_point)
     # Reshape to drop unnecessary dimensions left from embeddings
     flat_yes_point = Reshape((k_dim,))(yes_point)
+    if gaussian_noise > 0.0:
+        flat_yes_point = GaussianNoise(gaussian_noise)(flat_yes_point)
 
     # Generate no_point embedding layer
     no_point = Embedding(input_dim=n_votes, output_dim=k_dim, input_length=1, name="no_point",
                          # embeddings_constraint=MinMaxNorm(min_value=0.0, max_value=1.0, axis=1, rate=1.0),
                          embeddings_initializer=TruncatedNormal(mean=0.0, stddev=0.3, seed=None),
-                         embeddings_regularizer=OrthReg(1e-1),
+                         # embeddings_regularizer=OrthReg(1e-1),
                          )(bill_input)
     # no_point dropout regularization
     if no_point_dropout > 0.0:
@@ -485,6 +494,8 @@ def NNnominate(n_leg, n_votes,
             no_point = Dropout(no_point_dropout, seed=65)(no_point)
     # Reshape to drop unnecessary dimensions left from embeddings
     flat_no_point = Reshape((k_dim,))(no_point)
+    if gaussian_noise > 0.0:
+        flat_no_point = GaussianNoise(gaussian_noise)(flat_no_point)
 
     # Combine ideal_points, yes_points, and no_points using a custom dwnominate layer
     combined = JointWnomTerm(output_dim=1, trainable=True, name="wnom_term",
@@ -505,9 +516,9 @@ def NNnominate(n_leg, n_votes,
 
     # Final output, a simple logistic layer
     if main_activation == "sigmoid":
-        main_output = Dense(k_out, activation="sigmoid", name="main_output", use_bias=False, kernel_initializer=Constant(1))(combined)
+        main_output = Dense(k_out, activation="sigmoid", name="main_output", use_bias=False, kernel_initializer=Constant(5))(combined)
     elif main_activation == "gaussian":
-        main_output = Dense(k_out, activation=normal_activation, name="main_output", use_bias=False, kernel_initializer=Constant(1))(combined)
+        main_output = Dense(k_out, activation=normal_activation, name="main_output", use_bias=False, kernel_initializer=Constant(5))(combined)
 
     # Define model, depending on existence of covariates and time elements
     if covariates_list:
@@ -533,6 +544,7 @@ def NNitemresponse(n_leg, n_votes,
                    popularity_dropout=0.0,
                    combined_dropout=0.0,
                    dropout_type="timestep",
+                   gaussian_noise=0.05,
                    covariates_list=[],
                    k_out=1,
                    batch_normalize=False,
@@ -554,9 +566,12 @@ def NNitemresponse(n_leg, n_votes,
         polarity_dropout (float): polarity dropout rate
         use_popularity (bool): include a popularity bill parameter
         popularity_dropout (float): popularity dropout rate
+        combined_dropout (float): dropout rate for the combined data
         dropout_type (str): if timestep, an entire bill/legislator will be
             dropped at random, otherwise, a constant fraction of all weights
             will be dropped
+        guassian_noise (float): stdev of the GaussianNoise layer, which randomly
+            perturbs parameters to avoid overfitting. Set to 0.0 to omit.
         covariates_list (list), EXPERIMENTAL: a list of covariate names to
             initialize addition of covariates to the model
     # Returns:
@@ -604,6 +619,8 @@ def NNitemresponse(n_leg, n_votes,
 
     # Reshape to drop unecessary dimensions left from embeddings
     flat_ideal_points = Reshape((k_dim,))(main_ideal_points)
+    if gaussian_noise > 0.0:
+        flat_ideal_points = GaussianNoise(gaussian_noise)(flat_ideal_points)
 
     polarity = Embedding(input_dim=n_votes, output_dim=k_dim, input_length=1, name="polarity",
                          # embeddings_constraint=MinMaxNorm(min_value=0.0, max_value=3.0, axis=1, rate=1.0),

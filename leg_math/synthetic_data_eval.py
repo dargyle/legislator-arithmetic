@@ -7,6 +7,8 @@ import pickle
 from IPython.display import SVG
 from tensorflow.keras.utils import model_to_dot
 
+import tensorflow as tf
+import tensorflow_probability as tfp
 from tensorflow.keras.callbacks import EarlyStopping, TerminateOnNaN, ModelCheckpoint
 
 from data_generation.data_processing import process_data, prep_r_rollcall
@@ -132,8 +134,9 @@ for i in range(1, top_dim):
                     "init_leg_embedding": vote_data["init_embedding"],
                     "yes_point_dropout": 0.0,
                     "no_point_dropout": 0.0,
-                    "combined_dropout": 0.5,
+                    "combined_dropout": 0.0,
                     "dropout_type": "timestep",
+                    "gaussian_noise": 0.05,
                     "covariates_list": data_params["covariates_list"],
                     "main_activation": "gaussian",
                     }
@@ -143,8 +146,16 @@ for i in range(1, top_dim):
     # model.summary()
     # SVG(model_to_dot(model).create(prog='dot', format='svg'))
 
-    # model.compile(loss='mse', optimizer='adamax')
-    model.compile(loss='binary_crossentropy', optimizer='Nadam', metrics=['accuracy'])
+    # opt = tfp.optimizer.VariationalSGD(batch_size=1024,
+    #                                    total_num_examples=vote_data["N"],
+    #                                    # use_single_learning_rate=True,
+    #                                    burnin=100,
+    #                                    max_learning_rate=3.0,
+    #                                    burnin_max_learning_rate=3.0,
+    #                                    preconditioner_decay_rate=0.95,
+    #                                    )
+    opt = tf.keras.optimizers.Nadam()
+    model.compile(loss='binary_crossentropy', optimizer=opt, metrics=['accuracy'])
 
     # Weights are probably better, but not in original so comment out here
     weight_by_frequency = False
@@ -154,8 +165,8 @@ for i in range(1, top_dim):
         sample_weights = {k: 1 for k in np.unique(vote_data["y_train"])}
 
     callbacks = [
-                 # EarlyStopping('val_loss', patience=20, restore_best_weights=True),
-                 EarlyStopping('val_loss', patience=50, restore_best_weights=True),
+                 EarlyStopping('val_loss', patience=20, restore_best_weights=True),
+                 # EarlyStopping('val_loss', patience=250, restore_best_weights=True),
                  # GetBest(monitor='val_loss', verbose=1, mode='auto'),
                  ModelCheckpoint(DATA_PATH + '/temp/model_weights_{epoch}.hdf5'),
                  TerminateOnNaN()]
@@ -173,31 +184,63 @@ for i in range(1, top_dim):
         else:
             x_train = [vote_data["j_train"], vote_data["m_train"]]
             x_test = [vote_data["j_test"], vote_data["m_test"]]
-    history = model.fit(x_train, vote_data["y_train"], epochs=5000, batch_size=1000,
+    history = model.fit(x_train, vote_data["y_train"], epochs=5000, batch_size=1024,
                         validation_data=(x_test, vote_data["y_test"]), verbose=2, callbacks=callbacks,
                         class_weight={0: sample_weights[0],
                                       1: sample_weights[1]})
 
+    history_dict = history.history
+    losses = pd.DataFrame({'epoch': [i + 1 for i in range(len(history_dict['loss']))],
+                           'training': [loss for loss in history_dict['loss']],
+                           'validation': [loss for loss in history_dict['val_loss']],
+                           })
+    ax = losses.iloc[1:, :].plot(x='epoch', figsize=[7, 10], grid=True)
+
+    losses = pd.DataFrame({'epoch': [i + 1 for i in range(len(history_dict['accuracy']))],
+                           'training': [loss for loss in history_dict['accuracy']],
+                           'validation': [loss for loss in history_dict['val_accuracy']],
+                           })
+    losses["validation"].max()
+    ax = losses.iloc[1:, :].plot(x='epoch', figsize=[7, 10], grid=True)
+
+    model.get_layer("main_output").get_weights()[0]
+    np.log(model.get_layer("wnom_term").get_weights()[0])
     valid_weight_count = ~np.isclose(model.get_layer("wnom_term").get_weights()[0], 0)
     assert valid_weight_count.sum() == model_params["k_dim"], "Dimension mismatch"
 
-    train_df = np.stack([vote_data["j_train"],
-                         vote_data["m_train"],
-                         vote_data["y_train"]], axis=1)
-    train_df = pd.DataFrame(train_df, columns=["leg_id", "vote_id", "vote"])
-    train_df["leg_id"] = train_df["leg_id"].map(vote_data["leg_crosswalk"])
-    train_df["vote_id"] = train_df["vote_id"].map(vote_data["vote_crosswalk"])
-    test_df = np.stack([vote_data["j_test"],
-                        vote_data["m_test"],
-                        vote_data["y_test"]], axis=1)
-    test_df = pd.DataFrame(test_df, columns=["leg_id", "vote_id", "vote"])
-    test_df["leg_id"] = test_df["leg_id"].map(vote_data["leg_crosswalk"])
-    test_df["vote_id"] = test_df["vote_id"].map(vote_data["vote_crosswalk"])
+    train_df_list = [pd.DataFrame(vote_data[k], columns=[k]) for k in ['j_train', 'm_train', 'y_train']]
+    train_vote_df = pd.concat(train_df_list, axis=1)
+    train_vote_df = train_vote_df.rename(columns={"j_train": "leg_id", "m_train": "vote_id", "y_train": "vote"})
+    train_vote_df["leg_id"] = train_vote_df["leg_id"].map(vote_data["leg_crosswalk"])
+    train_vote_df["vote_id"] = train_vote_df["vote_id"].map(vote_data["vote_crosswalk"])
+
+    test_df_list = [pd.DataFrame(vote_data[k], columns=[k]) for k in ['j_test', 'm_test', 'y_test']]
+    test_vote_df = pd.concat(test_df_list, axis=1)
+    test_vote_df = test_vote_df.rename(columns={"j_test": "leg_id", "m_test": "vote_id", "y_test": "vote"})
+    test_vote_df["leg_id"] = test_vote_df["leg_id"].map(vote_data["leg_crosswalk"])
+    test_vote_df["vote_id"] = test_vote_df["vote_id"].map(vote_data["vote_crosswalk"])
 
     train_metrics = model.evaluate(x_train, vote_data["y_train"], batch_size=10000)
     train_metrics
     test_metrics = model.evaluate(x_test, vote_data["y_test"], batch_size=10000)
     test_metrics
+
+    use_standard_error = False
+    if use_standard_error:
+        total_iterations = len(history_dict["loss"])
+        ideal_point_list = []
+        w_list = []
+        for k in range(total_iterations - 200, total_iterations):
+            model_to_load = str(k)
+            model.load_weights(DATA_PATH + f'/temp/model_weights_{model_to_load}.hdf5')
+            ideal_point_list += [model.get_layer("ideal_points").get_weights()[0]]
+            w_list += [np.log(model.get_layer("wnom_term").get_weights()[0])]
+        np.mean(ideal_point_list, axis=0)
+        np.std(ideal_point_list, axis=0)
+        np.mean(w_list, axis=0)
+        np.std(w_list, axis=0)
+
+        pd.Series(np.array([d[1, 0] for d in ideal_point_list])).autocorr(lag=1)
 
     k_dim = i
     ideal_points = pd.DataFrame(model.get_layer("ideal_points").get_weights()[0],
@@ -212,13 +255,13 @@ for i in range(1, top_dim):
     w = model.get_layer("wnom_term").get_weights()[0]
     beta = model.get_layer("main_output").get_weights()[0]
 
-    train_results = get_probs_from_nominate(train_df, ideal_points, yes_points, no_points, w, beta)
+    train_results = get_probs_from_nominate(train_vote_df, ideal_points, yes_points, no_points, w, beta)
     nn_train_metrics = pd.Series({"k_dim": i,
                                   "dataset": "train",
                                   "algorithm": "nn",
                                   "log_loss": log_loss(train_results["vote"], train_results["vote_prob"]),
                                   "accuracy_score": accuracy_score(train_results["vote"], 1 * (train_results["vote_prob"] > 0.5))})
-    test_results = get_probs_from_nominate(test_df, ideal_points, yes_points, no_points, w, beta)
+    test_results = get_probs_from_nominate(test_vote_df, ideal_points, yes_points, no_points, w, beta)
     nn_test_metrics = pd.Series({"k_dim": i,
                                  "dataset": "test",
                                  "algorithm": "nn",
@@ -254,8 +297,13 @@ for i in range(1, top_dim):
                            # vote_names=roll_call.columns,
                            # vote_data=pd.DataFrame(roll_call.columns, columns=["vote_id"]),
                            )
-    wnom = wnominate.wnominate(r_data, polarity=base.seq(1, i), dims=i)
+    wnom = wnominate.wnominate(r_data,
+                               polarity=base.seq(1, i),
+                               dims=i,
+                               # trials=10,
+                               )
     base.summary(wnom)
+    wnom[0]
 
     k_dim = data_params["k_dim"]
     k_time = data_params["k_time"]
@@ -285,7 +333,7 @@ for i in range(1, top_dim):
     # r_ideal_points.columns = [f"coord{i}D" for i in range(1, k_dim + 1)]
 
     # votes = train_df
-    train_results = get_probs_from_nominate(train_df,
+    train_results = get_probs_from_nominate(train_vote_df,
                                             ideal_points=r_ideal_points,
                                             yes_points=wnom_votes.filter(regex="yes_coord"),
                                             no_points=wnom_votes.filter(regex="no_coord"),
@@ -293,7 +341,7 @@ for i in range(1, top_dim):
                                             beta=np.array(wnom.rx2("beta")),
                                             cdf_type="norm")
 
-    test_results = get_probs_from_nominate(test_df,
+    test_results = get_probs_from_nominate(test_vote_df,
                                            ideal_points=r_ideal_points,
                                            yes_points=wnom_votes.filter(regex="yes_coord"),
                                            no_points=wnom_votes.filter(regex="no_coord"),
@@ -316,6 +364,7 @@ for i in range(1, top_dim):
                                   nn_test_metrics,
                                   wnominate_train_metrics,
                                   wnominate_test_metrics], axis=1).transpose()
+    print(combined_metrics)
     metrics_list += [combined_metrics]
 
     combined_ideal = pd.merge(ideal_points, r_ideal_points,
