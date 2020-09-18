@@ -345,6 +345,7 @@ def generate_time_input(i):
 def generate_time_layer(i, n_leg, k_dim, leg_input, time_input):
     ideal_points_time = Embedding(input_dim=n_leg, output_dim=k_dim, input_length=1, name="ideal_points_time_{}".format(i),
                                   embeddings_initializer=TruncatedNormal(mean=0.0, stddev=0.05, seed=None),
+                                  embeddings_regularizer=regularizers.l2(),
                                   # weights=[init_leg_embedding_final.values]
                                   )(leg_input)
     ideal_points_time = Flatten()(ideal_points_time)
@@ -371,7 +372,7 @@ get_custom_objects().update({'normal_activation': Activation(normal_activation)}
 def NNnominate(n_leg, n_votes,
                k_dim=2,
                k_time=0,
-               init_leg_embedding=None,
+               init_leg_embedding=pd.DataFrame(),
                ideal_dropout=0.0,
                yes_point_dropout=0.0,
                no_point_dropout=0.0,
@@ -437,6 +438,10 @@ def NNnominate(n_leg, n_votes,
                              # embeddings_constraint=MinMaxNorm(min_value=0.0, max_value=1.0, axis=1, rate=1.0),
                              weights=[init_leg_embedding.values],
                              )(leg_input)
+
+    # ideal_points = MinMaxNorm(min_value=0.0, max_value=1.0, axis=1, rate=1.0)(ideal_points)
+    # ideal_points = tf.clip_by_norm(ideal_points, 1.0, axes=[1, 2], name="clip_by_norm")
+
     # Dropout regularization of the ideal points
     if ideal_dropout > 0.0:
         if dropout_type == "timestep":
@@ -458,15 +463,19 @@ def NNnominate(n_leg, n_votes,
     # main_ideal_points = BatchNormalization()(main_ideal_points)
     # main_ideal_points = Lambda(standardize, name="norm_ideal_points")(main_ideal_points)
 
+    # main_ideal_points = MinMaxNorm(min_value=0.0, max_value=1.0, axis=1, rate=1.0)(main_ideal_points)
+
     # Reshape to drop unecessary dimensions left from embeddings
     flat_ideal_points = Reshape((k_dim,))(main_ideal_points)
     if gaussian_noise > 0.0:
         flat_ideal_points = GaussianNoise(gaussian_noise)(flat_ideal_points)
 
+    flat_ideal_points = MinMaxNorm(min_value=0.0, max_value=1.0, axis=1, rate=1.0)(flat_ideal_points)
+
     # Generate yes_point embedding layer
     yes_point = Embedding(input_dim=n_votes, output_dim=k_dim, input_length=1, name="yes_point",
                           # embeddings_constraint=MinMaxNorm(min_value=0.0, max_value=1.0, axis=1, rate=1.0),
-                          embeddings_initializer=TruncatedNormal(mean=0.0, stddev=0.3, seed=None),
+                          embeddings_initializer=TruncatedNormal(mean=0.0, stddev=0.1, seed=None),
                           # embeddings_regularizer=OrthReg(1e-1),
                           )(bill_input)
     # yes_point dropout regularization
@@ -483,7 +492,7 @@ def NNnominate(n_leg, n_votes,
     # Generate no_point embedding layer
     no_point = Embedding(input_dim=n_votes, output_dim=k_dim, input_length=1, name="no_point",
                          # embeddings_constraint=MinMaxNorm(min_value=0.0, max_value=1.0, axis=1, rate=1.0),
-                         embeddings_initializer=TruncatedNormal(mean=0.0, stddev=0.3, seed=None),
+                         embeddings_initializer=TruncatedNormal(mean=0.0, stddev=0.1, seed=None),
                          # embeddings_regularizer=OrthReg(1e-1),
                          )(bill_input)
     # no_point dropout regularization
@@ -537,7 +546,7 @@ def NNnominate(n_leg, n_votes,
 def NNitemresponse(n_leg, n_votes,
                    k_dim=2,
                    k_time=0,
-                   init_leg_embedding=None,
+                   init_leg_embedding=pd.DataFrame(),
                    ideal_dropout=0.0,
                    polarity_dropout=0.0,
                    use_popularity=True,
@@ -595,7 +604,7 @@ def NNitemresponse(n_leg, n_votes,
     # unit sphere which is a slight difference from the conventional results.
     ideal_points = Embedding(input_dim=n_leg, output_dim=k_dim, input_length=1, name="ideal_points",
                              # embeddings_initializer=TruncatedNormal(mean=0.0, stddev=0.05, seed=None),
-                             embeddings_regularizer=OrthReg(1e-1),
+                             # embeddings_regularizer=OrthReg(1e-1),
                              # activity_regularizer=regularizers.l2(1e-6),
                              # embeddings_regularizer=UnitSphere(1e-1),
                              # embeddings_regularizer=regularizers.l2(1e-5),
@@ -612,19 +621,35 @@ def NNitemresponse(n_leg, n_votes,
         else:
             ideal_points = Dropout(ideal_dropout)(ideal_points)
 
-    if batch_normalize:
-        main_ideal_points = BatchNormalization(name="norm_ideal_points")(ideal_points)
-    else:
+    # Obtain layers for time (if any)
+    time_layer_list = [generate_time_layer(i, n_leg, k_dim, leg_input, time_input_list[i-1]) for i in range(1, k_time + 1)]
+
+    # Join the time layers with the embedding layer
+    if k_time == 0:
         main_ideal_points = ideal_points
+    else:
+        main_ideal_points = Add()([ideal_points] + time_layer_list)
+
+    if batch_normalize:
+        main_ideal_points = BatchNormalization(name="norm_ideal_points")(main_ideal_points)
+        # main_ideal_points = tf.clip_by_value(main_ideal_points, clip_value_min=-2.5, clip_value_max=2.5)
+    else:
+        main_ideal_points = main_ideal_points
 
     # Reshape to drop unecessary dimensions left from embeddings
     flat_ideal_points = Reshape((k_dim,))(main_ideal_points)
     if gaussian_noise > 0.0:
         flat_ideal_points = GaussianNoise(gaussian_noise)(flat_ideal_points)
 
+    # Add a regularization penalty
+    tf.keras.regularizers.L2(1e-1)(flat_ideal_points)
+    OrthReg(1e-1)(flat_ideal_points)
+    # flat_ideal_points = tf.clip_by_norm(flat_ideal_points, 1.0, name="clip_by_norm")
+
     polarity = Embedding(input_dim=n_votes, output_dim=k_dim, input_length=1, name="polarity",
                          # embeddings_constraint=MinMaxNorm(min_value=0.0, max_value=3.0, axis=1, rate=1.0),
                          # embeddings_initializer=TruncatedNormal(mean=0.0, stddev=0.05, seed=None),
+                         # embeddings_regularizer=regularizers.l2(1e-1),
                          )(bill_input)
     if polarity_dropout > 0.0:
         polarity = Dropout(polarity_dropout)(polarity)
@@ -633,6 +658,7 @@ def NNitemresponse(n_leg, n_votes,
         popularity = Embedding(input_dim=n_votes, output_dim=1, input_length=1, name="popularity",
                                # embeddings_constraint=MinMaxNorm(min_value=0.0, max_value=3.0, axis=1, rate=1.0),
                                # embeddings_initializer=TruncatedNormal(mean=0.0, stddev=0.05, seed=None),
+                               # embeddings_regularizer=regularizers.l2(1e-1),
                                )(bill_input)
         if popularity_dropout > 0.0:
             popularity = Dropout(popularity_dropout)(popularity)
@@ -655,7 +681,7 @@ def NNitemresponse(n_leg, n_votes,
 
     main_output = Dense(1, activation="sigmoid", name="main_output", use_bias=False, kernel_initializer=Constant(1.0), trainable=False)(combined)
 
-    model = Model(inputs=[leg_input, bill_input], outputs=[main_output])
+    # model = Model(inputs=[leg_input, bill_input], outputs=[main_output])
 
     # Define model, depending on existence of covariates and time elements
     if covariates_list:
@@ -672,28 +698,82 @@ def NNitemresponse(n_leg, n_votes,
 
 
 if __name__ == '__main__':
-    fsize=1
-    dsize=5
-    x=np.random.random((fsize,dsize))
-    y=np.random.random((fsize,dsize))
-    xy=np.concatenate([x,y], axis=0)
+    from data_generation.random_votes import generate_nominate_votes
+    from data_generation.data_processing import process_data, format_model_data
+    # item_model = NNnominate(n_leg=1000, n_votes=1000, k_dim=1, k_time=1)
 
-    x
-    y
-    xy
+    vote_df = generate_nominate_votes(n_leg=25, n_votes=250, k_dim=2, w=np.array([1.0, 1.0]), beta=7.5, cdf_type="norm").reset_index()
 
-    xy_t = K.random_normal_variable(shape=(5, 1), mean=0, scale=1)
-    K.eval(xy_t)
+    data_params = dict(
+                   vote_df=vote_df,
+                   congress_cutoff=112,
+                   k_dim=2,
+                   k_time=0,
+                   covariates_list=[],
+                   )
+    vote_data = process_data(**data_params)
 
-    mean_t = K.mean(xy_t, axis=0, keepdims=True)
-    K.eval(mean_t)
-    cov_t = (K.transpose(xy_t-mean_t) @ (xy_t-mean_t)) / (dsize - 1)
-    K.eval(cov_t)
-    cov2_t = tf.linalg.diag(1 / K.sqrt(tf.linalg.diag_part(cov_t)))
-    K.eval(cov2_t)
-    cor = cov2_t @ cov_t @ cov2_t
+    x_train, x_test, sample_weights = format_model_data(vote_data, data_params, weight_by_frequency=False)
 
-    xy = K.eval(xy_t)
-    np.testing.assert_allclose(np.corrcoef(xy, rowvar=False), K.eval(cor), rtol=1e-06)
+    model_params = {
+                    "n_leg": vote_data["J"],
+                    "n_votes": vote_data["M"],
+                    "k_dim": data_params["k_dim"],
+                    "k_time": data_params["k_time"],
+                    "init_leg_embedding": vote_data["init_embedding"],
+                    "yes_point_dropout": 0.0,
+                    "no_point_dropout": 0.0,
+                    "combined_dropout": 0.0,
+                    "dropout_type": "timestep",
+                    "gaussian_noise": 0.0,
+                    "covariates_list": data_params["covariates_list"],
+                    "main_activation": "gaussian",
+                    }
 
-    K
+    model = NNnominate(**model_params)
+
+    item_model_params = model_params.copy()
+    item_model_params.pop("yes_point_dropout")
+    item_model_params.pop("no_point_dropout")
+    item_model_params.pop("main_activation")
+    item_model = NNitemresponse(**item_model_params)
+
+    # opt = tfp.optimizer.VariationalSGD(batch_size=1024,
+    #                                    total_num_examples=vote_data["N"],
+    #                                    # use_single_learning_rate=True,
+    #                                    burnin=100,
+    #                                    max_learning_rate=3.0,
+    #                                    burnin_max_learning_rate=3.0,
+    #                                    preconditioner_decay_rate=0.95,
+    #                                    )
+    opt = tf.keras.optimizers.Nadam()
+    model.compile(loss='binary_crossentropy', optimizer=opt, metrics=['accuracy'])
+
+    callbacks = [
+                 EarlyStopping('val_loss', patience=20, restore_best_weights=True),
+                 # EarlyStopping('val_loss', patience=250, restore_best_weights=True),
+                 # GetBest(monitor='val_loss', verbose=1, mode='auto'),
+                 # ModelCheckpoint(DATA_PATH + '/temp/model_weights_{epoch}.hdf5'),
+                 TerminateOnNaN()]
+    history = model.fit(x_train, vote_data["y_train"], epochs=5000, batch_size=1024,
+                        validation_data=(x_test, vote_data["y_test"]), verbose=2, callbacks=callbacks,
+                        class_weight={0: sample_weights[0],
+                                      1: sample_weights[1]})
+
+    model.compile(loss='binary_crossentropy', optimizer=opt, metrics=['accuracy'])
+
+    callbacks = [
+                 EarlyStopping('val_loss', patience=20, restore_best_weights=True),
+                 # EarlyStopping('val_loss', patience=250, restore_best_weights=True),
+                 # GetBest(monitor='val_loss', verbose=1, mode='auto'),
+                 # ModelCheckpoint(DATA_PATH + '/temp/model_weights_{epoch}.hdf5'),
+                 TerminateOnNaN()]
+    item_model.compile(loss='binary_crossentropy', optimizer=opt, metrics=['accuracy'])
+    history = item_model.fit(x_train, vote_data["y_train"], epochs=5000, batch_size=1024,
+                             validation_data=(x_test, vote_data["y_test"]), verbose=2, callbacks=callbacks,
+                             class_weight={0: sample_weights[0],
+                                           1: sample_weights[1]})
+
+
+    # TODO: Move Orthogoal regularization outside the embedding layers
+    # TODO: Add the MinMaxNorm outside as well? clip_by_norm

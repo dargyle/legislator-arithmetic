@@ -216,6 +216,42 @@ def process_data(vote_df, congress_cutoff=0, k_dim=1, k_time=0,
     return vote_data
 
 
+def format_model_data(vote_data, data_params, weight_by_frequency=True):
+    '''Format vote_data for use in model, calculate sample weights
+
+    # Args:
+        vote_data (dict): A dictionary of processed vote data
+        data_params (dict): A parameter dictionary for the model
+        weight_by_frequency (bool): Should sample weights be calculated based on frequency
+    # Returns:
+        x_train (list): A list of input data for the model, training set
+        x_test (list): A list of input data for the model, test set
+        sample_weights (dict): A dictionary mapping outcomes to sample weights
+    '''
+    # Weights are probably better, but not in original so comment out here
+    if weight_by_frequency:
+        sample_weights = (1.0 * vote_data["y_train"].shape[0]) / (len(np.unique(vote_data["y_train"])) * np.bincount(np.squeeze(vote_data["y_train"])))
+    else:
+        sample_weights = {k: 1 for k in np.unique(vote_data["y_train"])}
+
+    if data_params["covariates_list"]:
+        if data_params["k_time"] > 0:
+            x_train = [vote_data["j_train"], vote_data["m_train"]] + vote_data["time_passed_train"] + [vote_data["covariates_train"]]
+            x_test = [vote_data["j_test"], vote_data["m_test"]] + vote_data["time_passed_test"] + [vote_data["covariates_test"]]
+        else:
+            x_train = [vote_data["j_train"], vote_data["m_train"]] + [vote_data["covariates_train"]]
+            x_test = [vote_data["j_test"], vote_data["m_test"]] + [vote_data["covariates_test"]]
+    else:
+        if data_params["k_time"] > 0:
+            x_train = [vote_data["j_train"], vote_data["m_train"]] + vote_data["time_passed_train"]
+            x_test = [vote_data["j_test"], vote_data["m_test"]] + vote_data["time_passed_test"]
+        else:
+            x_train = [vote_data["j_train"], vote_data["m_train"]]
+            x_test = [vote_data["j_test"], vote_data["m_test"]]
+
+    return x_train, x_test, sample_weights
+
+
 def prep_r_rollcall(vote_data):
     '''Use the processed data to generate files compatible with the R packages
 

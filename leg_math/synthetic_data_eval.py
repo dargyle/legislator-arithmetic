@@ -11,7 +11,7 @@ import tensorflow as tf
 import tensorflow_probability as tfp
 from tensorflow.keras.callbacks import EarlyStopping, TerminateOnNaN, ModelCheckpoint
 
-from data_generation.data_processing import process_data, prep_r_rollcall
+from data_generation.data_processing import process_data, format_model_data, prep_r_rollcall
 from data_generation.random_votes import generate_nominate_votes
 
 from leg_math.keras_helpers import GetBest, NNnominate
@@ -117,6 +117,8 @@ for i in range(1, top_dim):
                    )
     vote_data = process_data(**data_params)
 
+    x_train, x_test, sample_weights = format_model_data(vote_data, data_params, weight_by_frequency=False)
+
     # Cache some objects for use in R later
     roll_call = prep_r_rollcall(vote_data)
 
@@ -136,14 +138,14 @@ for i in range(1, top_dim):
                     "no_point_dropout": 0.0,
                     "combined_dropout": 0.0,
                     "dropout_type": "timestep",
-                    "gaussian_noise": 0.05,
+                    "gaussian_noise": 0.0,
                     "covariates_list": data_params["covariates_list"],
                     "main_activation": "gaussian",
                     }
 
     model = NNnominate(**model_params)
 
-    # model.summary()
+    model.summary()
     # SVG(model_to_dot(model).create(prog='dot', format='svg'))
 
     # opt = tfp.optimizer.VariationalSGD(batch_size=1024,
@@ -157,33 +159,12 @@ for i in range(1, top_dim):
     opt = tf.keras.optimizers.Nadam()
     model.compile(loss='binary_crossentropy', optimizer=opt, metrics=['accuracy'])
 
-    # Weights are probably better, but not in original so comment out here
-    weight_by_frequency = False
-    if weight_by_frequency:
-        sample_weights = (1.0 * vote_data["y_train"].shape[0]) / (len(np.unique(vote_data["y_train"])) * np.bincount(vote_data["y_train"]))
-    else:
-        sample_weights = {k: 1 for k in np.unique(vote_data["y_train"])}
-
     callbacks = [
                  EarlyStopping('val_loss', patience=20, restore_best_weights=True),
                  # EarlyStopping('val_loss', patience=250, restore_best_weights=True),
                  # GetBest(monitor='val_loss', verbose=1, mode='auto'),
                  ModelCheckpoint(DATA_PATH + '/temp/model_weights_{epoch}.hdf5'),
                  TerminateOnNaN()]
-    if data_params["covariates_list"]:
-        if data_params["k_time"] > 0:
-            x_train = [vote_data["j_train"], vote_data["m_train"]] + vote_data["time_passed_train"] + [vote_data["covariates_train"]]
-            x_test = [vote_data["j_test"], vote_data["m_test"]] + vote_data["time_passed_test"] + [vote_data["covariates_test"]]
-        else:
-            x_train = [vote_data["j_train"], vote_data["m_train"]] + [vote_data["covariates_train"]]
-            x_test = [vote_data["j_test"], vote_data["m_test"]] + [vote_data["covariates_test"]]
-    else:
-        if data_params["k_time"] > 0:
-            x_train = [vote_data["j_train"], vote_data["m_train"]] + vote_data["time_passed_train"]
-            x_test = [vote_data["j_test"], vote_data["m_test"]] + vote_data["time_passed_test"]
-        else:
-            x_train = [vote_data["j_train"], vote_data["m_train"]]
-            x_test = [vote_data["j_test"], vote_data["m_test"]]
     history = model.fit(x_train, vote_data["y_train"], epochs=5000, batch_size=1024,
                         validation_data=(x_test, vote_data["y_test"]), verbose=2, callbacks=callbacks,
                         class_weight={0: sample_weights[0],
