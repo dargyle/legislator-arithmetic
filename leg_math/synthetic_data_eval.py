@@ -98,7 +98,7 @@ else:
 # robjects.r['source']("./leg_math/test_data_in_r.R")
 # Better way, directly interact with R (below)
 
-i = 3
+i = 1
 top_dim = 7
 
 metrics_list = []

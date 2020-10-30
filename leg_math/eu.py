@@ -184,10 +184,10 @@ drift_names = ["drift_{}".format(j) for j in range(1, k_dim + 1)]
 yes_point_names = ["yes_point_{}".format(j) for j in range(1, k_dim + 1)]
 no_point_names = ["no_point_{}".format(j) for j in range(1, k_dim + 1)]
 
-if data_params["data_type"] == "test":
-    var_list = [f"nominate_dim{i}" for i in range(1, k_dim + 1)] + ideal_point_names + drift_names
-if data_params["data_type"] == "votes" or data_params["data_type"] == "cosponsor" or data_params["data_type"] == "eu":
-    var_list = [f"nominate_dim{i}" for i in range(1, 3)] + ideal_point_names + drift_names
+# if data_params["data_type"] == "test":
+#     var_list = [f"nominate_dim{i}" for i in range(1, k_dim + 1)] + ideal_point_names + drift_names
+# if data_params["data_type"] == "votes" or data_params["data_type"] == "cosponsor" or data_params["data_type"] == "eu":
+var_list = [f"nominate_dim{i}" for i in range(1, 3)] + ideal_point_names + drift_names
 
 cf_ideal_points = pd.DataFrame(model.get_layer("ideal_points").get_weights()[0], columns=ideal_point_names)
 cf_ideal_points["ideal_2"] = cf_ideal_points["ideal_2"] * -1

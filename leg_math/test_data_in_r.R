@@ -80,4 +80,9 @@ write.csv(wnom5$rollcalls, file="~/data/leg_math/wnom5D_rollcalls.csv")
 
 
 asdf = ideal(test_data, d=1, normalize=TRUE, impute=TRUE, store.item=TRUE)
-zxcv = idealToMCMC(asdf)
+zxcv = summary(asdf)
+
+
+asdf = ideal(test_data, d=3, normalize=TRUE, impute=TRUE, store.item=TRUE)
+zxcv = summary(asdf)
+

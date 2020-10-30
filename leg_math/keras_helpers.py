@@ -438,8 +438,8 @@ def NNnominate(n_leg, n_votes,
                              # embeddings_constraint=MinMaxNorm(min_value=0.0, max_value=1.0, axis=1, rate=1.0),
                              weights=[init_leg_embedding.values],
                              )(leg_input)
-
-    # ideal_points = MinMaxNorm(min_value=0.0, max_value=1.0, axis=1, rate=1.0)(ideal_points)
+    # https://stackoverflow.com/questions/63122880/tensorflow-2-runtimeerror-cannot-use-a-constraint-function-on-a-sparse-variabl
+    ideal_points = MinMaxNorm(min_value=0.0, max_value=1.0, axis=1, rate=1.0)(ideal_points)
     # ideal_points = tf.clip_by_norm(ideal_points, 1.0, axes=[1, 2], name="clip_by_norm")
 
     # Dropout regularization of the ideal points
@@ -604,7 +604,7 @@ def NNitemresponse(n_leg, n_votes,
     # unit sphere which is a slight difference from the conventional results.
     ideal_points = Embedding(input_dim=n_leg, output_dim=k_dim, input_length=1, name="ideal_points",
                              # embeddings_initializer=TruncatedNormal(mean=0.0, stddev=0.05, seed=None),
-                             # embeddings_regularizer=OrthReg(1e-1),
+                             embeddings_regularizer=OrthReg(1e-1),
                              # activity_regularizer=regularizers.l2(1e-6),
                              # embeddings_regularizer=UnitSphere(1e-1),
                              # embeddings_regularizer=regularizers.l2(1e-5),
@@ -679,21 +679,23 @@ def NNitemresponse(n_leg, n_votes,
         covariates = Input(shape=(len(covariates_list), ), name="covariates")
         combined = Concatenate()([combined, covariates])
 
-    main_output = Dense(1, activation="sigmoid", name="main_output", use_bias=False, kernel_initializer=Constant(1.0), trainable=False)(combined)
+    output_list = []
+    for j in range(k_out):
+        output_list += [Dense(1, activation="sigmoid", name=f"main_output_{j}", use_bias=False, kernel_initializer=Constant(1.0), trainable=True)(combined)]
 
-    # model = Model(inputs=[leg_input, bill_input], outputs=[main_output])
+    model = Model(inputs=[leg_input, bill_input], outputs=output_list)
 
     # Define model, depending on existence of covariates and time elements
-    if covariates_list:
-        if k_time > 0:
-            model = Model(inputs=[leg_input, bill_input] + time_input_list + [covariates], outputs=[main_output])
-        else:
-            model = Model(inputs=[leg_input, bill_input] + [covariates], outputs=[main_output])
-    else:
-        if k_time > 0:
-            model = Model(inputs=[leg_input, bill_input] + time_input_list, outputs=[main_output])
-        else:
-            model = Model(inputs=[leg_input, bill_input], outputs=[main_output])
+    # if covariates_list:
+    #     if k_time > 0:
+    #         model = Model(inputs=[leg_input, bill_input] + time_input_list + [covariates], outputs=output_list)
+    #     else:
+    #         model = Model(inputs=[leg_input, bill_input] + [covariates], outputs=output_list)
+    # else:
+    #     if k_time > 0:
+    #         model = Model(inputs=[leg_input, bill_input] + time_input_list, outputs=output_list)
+    #     else:
+    #         model = Model(inputs=[leg_input, bill_input], outputs=output_list)
     return model
 
 

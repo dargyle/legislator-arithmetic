@@ -50,20 +50,28 @@ for leg_id in leg_ids:
 
 
 def update_trace(trace, points, selector):
-    if len(points.point_inds)==1:
-        i = points.trace_index
-        for x in range(0, len(fig.data)):
-            fig.data[x]['line']['color'] = 'grey'
-            fig.data[x]['opacity'] = 0.3
-            fig.data[x]['line']['width'] = default_linewidth
-        #print('Correct Index: {}',format(i))
-        fig.data[i]['line']['color'] = 'red'
-        fig.data[i]['opacity'] = 1
-        fig.data[i]['line']['width'] = highlighted_linewidth_delta
+    i = points.trace_index
+    for x in range(0, len(fig.data)):
+        # fig.data[x]['line']['color'] = 'grey'
+        fig.data[x]['opacity'] = 0.3
+        # fig.data[x]['line']['width'] = default_linewidth
+    #print('Correct Index: {}',format(i))
+    # fig.data[i]['line']['color'] = 'red'
+    fig.data[i]['opacity'] = 1
+    # fig.data[i]['line']['width'] = highlighted_linewidth_delta
+
+
+def update_trace(trace, points, selector):
+    # this list stores the points which were clicked on
+    # in all but one trace they are empty
+    f.data[points.trace_index]['opacity'] = 1.0
+    f.data[points.trace_index]['color'] = 'red'
+
+
 
 
 for x in range(0, len(fig.data)):
-    fig.data[x].on_click(update_trace)
+    fig.data[x].on_hover(update_trace)
 
 fig.show()
 
@@ -73,4 +81,21 @@ fig.write_html(EU_PATH + "dynamic_viz.html")
 
 import plotly_express as px
 
-fig = px.line(dynamic_leg_data, x="ideal_1_time", y="ideal_2_time", color="party_plot", line_group="leg_id", hover_name="leg_id")
+fig = px.line(dynamic_leg_data[dynamic_leg_data["active"] == "active"], x="ideal_1_time", y="ideal_2_time",
+              color="party_plot", line_group="leg_id", color_discrete_map=hue_map, hover_name='name_full',
+              hover_data={'home_country': True, "congress": True}, width=1000, height=800)
+fig.update_traces(mode='lines+markers')
+fig.update_layout(title_text='European Parliament: Dynamic Ideal Points')
+# for x in range(0, len(fig.data)):
+#     fig.data[x]['line']['color'] = 'grey'
+#     fig.data[x]['opacity'] = 0.3
+fig.show()
+
+f = go.FigureWidget(fig)
+f.layout.hovermode = 'closest'
+f.layout.hoverdistance = -1
+for x in range(0, len(f.data)):
+    f.data[x].on_hover(update_trace)
+f.show()
+
+fig.write_html(EU_PATH + "dynamic_viz.html")
