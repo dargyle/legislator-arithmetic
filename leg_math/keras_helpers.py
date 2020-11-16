@@ -683,19 +683,19 @@ def NNitemresponse(n_leg, n_votes,
     for j in range(k_out):
         output_list += [Dense(1, activation="sigmoid", name=f"main_output_{j}", use_bias=False, kernel_initializer=Constant(1.0), trainable=True)(combined)]
 
-    model = Model(inputs=[leg_input, bill_input], outputs=output_list)
+    # model = Model(inputs=[leg_input, bill_input], outputs=output_list)
 
     # Define model, depending on existence of covariates and time elements
-    # if covariates_list:
-    #     if k_time > 0:
-    #         model = Model(inputs=[leg_input, bill_input] + time_input_list + [covariates], outputs=output_list)
-    #     else:
-    #         model = Model(inputs=[leg_input, bill_input] + [covariates], outputs=output_list)
-    # else:
-    #     if k_time > 0:
-    #         model = Model(inputs=[leg_input, bill_input] + time_input_list, outputs=output_list)
-    #     else:
-    #         model = Model(inputs=[leg_input, bill_input], outputs=output_list)
+    if covariates_list:
+        if k_time > 0:
+            model = Model(inputs=[leg_input, bill_input] + time_input_list + [covariates], outputs=output_list)
+        else:
+            model = Model(inputs=[leg_input, bill_input] + [covariates], outputs=output_list)
+    else:
+        if k_time > 0:
+            model = Model(inputs=[leg_input, bill_input] + time_input_list, outputs=output_list)
+        else:
+            model = Model(inputs=[leg_input, bill_input], outputs=output_list)
     return model
 
 

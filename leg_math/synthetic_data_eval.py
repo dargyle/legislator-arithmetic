@@ -395,8 +395,8 @@ fig.clf()
 
 plt.figure(1)
 plt.subplot(211)
-ax = sns.tsplot(data=plot_data[plot_data["metric"] == "log_loss"], time="k_dim", unit="algorithm", condition="dataset", value="score",
-                err_style=None, marker="o")
+ax = sns.lineplot(data=plot_data[plot_data["metric"] == "log_loss"], y="score", x="k_dim", hue="algorithm", condition="dataset", 
+                  err_style=None, marker="o")
 ax.set(xlim=(0.9, 5.1), xticks=range(1, 8))
 fig = ax.get_figure()
 fig.show()

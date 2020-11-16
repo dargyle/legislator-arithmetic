@@ -14,7 +14,7 @@ from tensorflow.keras.callbacks import EarlyStopping, TerminateOnNaN, ModelCheck
 from data_generation.data_processing import process_data, format_model_data
 from data_generation.random_votes import generate_nominate_votes
 
-from leg_math.keras_helpers import GetBest, NNitemresponse
+from leg_math.keras_helpers import GetBest, NNitemresponse, NNnominate
 
 from scipy import stats
 
@@ -55,7 +55,8 @@ model_params = {
                 # "main_activation": "gaussian",
                 }
 
-model = NNitemresponse(**model_params)
+# model = NNitemresponse(**model_params)
+model = NNnominate(**model_params)
 
 model.summary()
 # SVG(model_to_dot(model).create(prog='dot', format='svg'))
@@ -68,7 +69,8 @@ model.summary()
 #                                    burnin_max_learning_rate=3.0,
 #                                    preconditioner_decay_rate=0.95,
 #                                    )
-opt = tf.keras.optimizers.Nadam()
+# opt = tf.keras.optimizers.Nadam()
+opt = tfp.optimizer.VariationalSGD(batch_size=1, total_num_examples=vote_data["N"])
 model.compile(loss='binary_crossentropy', optimizer=opt, metrics=['accuracy'])
 
 callbacks = [
@@ -77,7 +79,7 @@ callbacks = [
              # GetBest(monitor='val_loss', verbose=1, mode='auto'),
              ModelCheckpoint(DATA_PATH + '/temp/model_weights_{epoch}.hdf5'),
              TerminateOnNaN()]
-history = model.fit(x_train, vote_data["y_train"], epochs=5000, batch_size=1024,
+history = model.fit(x_train, vote_data["y_train"], epochs=5000, batch_size=1,
                     validation_data=(x_test, vote_data["y_test"]), verbose=2, callbacks=callbacks,
                     class_weight={0: sample_weights[0],
                                   1: sample_weights[1]})
@@ -170,7 +172,7 @@ fig = px.line(dynamic_leg_data[dynamic_leg_data["last_session"] >= 116], x="idea
               hover_data={'state_abbrev': True, "congress": True, "party_plot": False, "party_name": True}, width=1000, height=800)
 fig.update_traces(mode='lines+markers')
 fig.show()
-fig.write_html(DATA_PATH + "us_dynamic_viz.html")
+fig.write_html(DATA_PATH + "us_dynamic_viz_current.html")
 
 fig = px.line(dynamic_leg_data, x="ideal_1_time", y="ideal_2_time",
               color="party_plot", line_group="leg_id", hover_name='bioname',
@@ -178,4 +180,4 @@ fig = px.line(dynamic_leg_data, x="ideal_1_time", y="ideal_2_time",
               hover_data={'state_abbrev': True, "congress": True, "party_plot": False, "party_name": True}, width=1000, height=800)
 fig.update_traces(mode='lines+markers')
 fig.show()
-fig.write_html(DATA_PATH + "us_dynamic_viz.html")
+fig.write_html(DATA_PATH + "us_dynamic_viz_all.html")
