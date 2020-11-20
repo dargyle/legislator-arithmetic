@@ -23,6 +23,8 @@ from sklearn.metrics import log_loss, accuracy_score
 from constants import DATA_PATH
 
 tfd = tfp.distributions
+
+
 vote_df = pd.read_feather(DATA_PATH + "vote_df_cleaned.feather")
 vote_df = vote_df[vote_df["chamber"] == "Senate"]
 
@@ -53,7 +55,7 @@ prob N x I x K
 
 @tf.function
 def grm_model_prob(abilities, discriminations, difficulties, expanded=False):
-    offsets = difficulties[tf.newaxis,:,:] - abilities[:, tf.newaxis, tf.newaxis]
+    offsets = difficulties[tf.newaxis, :, :] - abilities[:, tf.newaxis, tf.newaxis]
     scaled = offsets*discriminations[tf.newaxis, :, tf.newaxis]
     logits = 1.0/(1+tf.exp(scaled))
     logits = tf.pad(logits, paddings=(
@@ -77,10 +79,11 @@ tau (difficulty) I x K-2
 @tf.function
 def joint_log_prob(responses, discriminations, difficulties0, ddifficulties, abilities, mu):
     # assemble the difficulties
-    d0 = tf.concat([difficulties0[:,tf.newaxis],ddifficulties],axis=1)
-    difficulties = tf.cumsum(d0,axis=1)
+    d0 = tf.concat([difficulties0[:,tf.newaxis], ddifficulties],axis=1)
+    difficulties = tf.cumsum(d0, axis=1)
     return tf.reduce_sum(log_likelihood(responses, discriminations, difficulties, abilities)) + \
         joint_log_prior(discriminations, difficulties0, ddifficulties, abilities, mu)
+
 
 @tf.function
 def log_likelihood(responses, discriminations, difficulties, abilities):
@@ -88,18 +91,20 @@ def log_likelihood(responses, discriminations, difficulties, abilities):
         abilities, discriminations, difficulties))
     return rv_responses.log_prob(responses)
 
+
 @tf.function
 def joint_log_prior(discriminations, difficulties0, ddifficulties, abilities, mu):
     rv_discriminations = tfd.HalfNormal(scale=tf.ones_like(discriminations))
-    rv_difficulties0 =  tfd.Normal(loc=mu, scale=1.*tf.ones_like(difficulties0))
-    rv_ddifficulties =  tfd.HalfNormal(scale=tf.ones_like(ddifficulties))
-    rv_abilities =  tfd.Normal(loc=tf.zeros_like(abilities), scale=1.)
-    rv_mu =  tfd.Normal(loc=tf.zeros_like(mu),scale=1.)
+    rv_difficulties0 = tfd.Normal(loc=mu, scale=1.*tf.ones_like(difficulties0))
+    rv_ddifficulties = tfd.HalfNormal(scale=tf.ones_like(ddifficulties))
+    rv_abilities = tfd.Normal(loc=tf.zeros_like(abilities), scale=1.)
+    rv_mu = tfd.Normal(loc=tf.zeros_like(mu), scale=1.)
 
     return tf.reduce_sum(rv_discriminations.log_prob(discriminations)) + \
         tf.reduce_sum(rv_difficulties0.log_prob(difficulties0)) + \
         tf.reduce_sum(rv_ddifficulties.log_prob(ddifficulties)) + \
         tf.reduce_sum(rv_abilities.log_prob(abilities))
+
 
 difficulties0 = np.sort(np.random.normal(size=(I, K-1)), axis=1)
 abilities0 = np.random.normal(size=N)
@@ -107,10 +112,10 @@ abilities0 = np.random.normal(size=N)
 # Set the chain's start state.
 initial_chain_state = [
     tf.ones((I), name='init_discriminations'),
-    tf.cast(difficulties0[:,0],tf.float32, name='init_difficulties0'), # may be causing problems
-    tf.cast(difficulties0[:,1:]-difficulties0[:,:-1],tf.float32, name='init_ddifficulties'),
-    tf.cast(abilities0,tf.float32, name='init_abilities'),
-    tf.zeros((I),name='init_mu')
+    tf.cast(difficulties0[:, 0], tf.float32, name='init_difficulties0'), # may be causing problems
+    tf.cast(difficulties0[:, 1:]-difficulties0[:, :-1], tf.float32, name='init_ddifficulties'),
+    tf.cast(abilities0, tf.float32, name='init_abilities'),
+    tf.zeros((I), name='init_mu')
 ]
 
 # Since MCMC operates over unconstrained space, we need to transform the

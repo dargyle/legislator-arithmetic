@@ -1,34 +1,72 @@
 name: leg_math_new
 channels:
+  - pytorch
   - defaults
+  - anaconda
+  - conda-forge
   - s3://conda-packages
   - s3://fn-research/conda-packages
 dependencies:
-  - ca-certificates=2020.6.24=0
-  - certifi=2020.6.20=py38_0
+  - blas=1.0=mkl
+  - ca-certificates=2020.10.14=0
+  - certifi=2020.6.20=pyhd3eb1b0_3
+  - freetype=2.10.4=ha233b18_0
+  - intel-openmp=2019.4=233
+  - jpeg=9b=he5867d9_2
+  - lcms2=2.11=h92f6f08_0
   - libcxx=10.0.0=1
   - libedit=3.1.20191231=h1de35cc_1
   - libffi=3.3=hb1e8313_2
+  - libpng=1.6.37=ha441bb4_0
+  - libtiff=4.1.0=hcb84e12_1
+  - libuv=1.40.0=haf1e3a3_0
+  - lz4-c=1.9.2=h79c402e_3
+  - mkl=2019.4=233
+  - mkl-service=2.3.0=py38hfbe908c_0
+  - mkl_fft=1.2.0=py38hc64f4ea_0
+  - mkl_random=1.1.1=py38h959d312_0
   - ncurses=6.2=h0a44026_1
-  - openssl=1.1.1g=h1de35cc_0
+  - ninja=1.10.1=py38h879752b_0
+  - numpy-base=1.19.2=py38hcfb5961_0
+  - olefile=0.46=py_0
+  - openssl=1.1.1h=haf1e3a3_0
   - pip=20.2.2=py38_0
   - python=3.8.5=h26836e1_0
+  - pytorch=1.7.0=py3.8_0
   - readline=8.0=h1de35cc_0
   - setuptools=49.6.0=py38_0
+  - six=1.15.0=py38hecd8cb5_0
   - sqlite=3.32.3=hffcf06c_0
   - tk=8.6.10=hb0a8c7a_0
+  - torchaudio=0.7.0=py38
+  - torchvision=0.8.1=py38_cpu
+  - typing_extensions=3.7.4.3=py_0
   - wheel=0.34.2=py38_0
   - xz=5.2.5=h1de35cc_0
   - zlib=1.2.11=h1de35cc_3
+  - zstd=1.4.5=h41d2c2f_0
   - pip:
     - absl-py==0.9.0
     - appnope==0.1.0
+    - argon2-cffi==20.1.0
     - astunparse==1.6.3
+    - async-generator==1.10
+    - attrs==20.2.0
     - backcall==0.2.0
+    - bleach==3.2.0
     - cachetools==4.1.1
+    - cffi==1.14.2
     - chardet==3.0.4
+    - cloudpickle==1.3.0
+    - colorlover==0.3.0
+    - cufflinks==0.17.3
     - cycler==0.10.0
+    - dataclasses==0.6
     - decorator==4.4.2
+    - defusedxml==0.6.0
+    - dm-tree==0.1.5
+    - entrypoints==0.3
+    - future==0.18.2
     - gast==0.3.3
     - google-auth==1.20.1
     - google-auth-oauthlib==0.4.1
@@ -36,56 +74,94 @@ dependencies:
     - grpcio==1.31.0
     - h5py==2.10.0
     - idna==2.10
+    - iniconfig==1.0.1
     - ipykernel==5.3.4
     - ipython==7.17.0
     - ipython-genutils==0.2.0
+    - ipywidgets==7.5.1
     - jedi==0.17.2
+    - jinja2==2.11.2
+    - joblib==0.16.0
+    - jsonschema==3.2.0
     - jupyter-client==6.1.6
     - jupyter-core==4.6.3
+    - jupyterlab-pygments==0.1.1
     - keras-preprocessing==1.1.2
     - kiwisolver==1.2.0
     - markdown==3.2.2
+    - markupsafe==1.1.1
     - matplotlib==3.3.0
+    - mistune==0.8.4
+    - more-itertools==8.5.0
+    - nbclient==0.5.0
+    - nbconvert==6.0.2
+    - nbformat==5.0.7
+    - nest-asyncio==1.4.0
+    - notebook==6.1.4
     - numpy==1.18.5
     - oauthlib==3.1.0
     - opt-einsum==3.3.0
+    - packaging==20.4
     - pandas==1.1.0
+    - pandocfilters==1.4.2
     - parso==0.7.1
     - patsy==0.5.1
     - pexpect==4.8.0
     - pickleshare==0.7.5
     - pillow==7.2.0
+    - plotly==4.10.0
+    - plotly-express==0.4.1
+    - pluggy==0.13.1
+    - prometheus-client==0.8.0
     - prompt-toolkit==3.0.6
     - protobuf==3.13.0
     - ptyprocess==0.6.0
+    - py==1.9.0
+    - py-irt==0.0.2
     - pyarrow==1.0.0
     - pyasn1==0.4.8
     - pyasn1-modules==0.2.8
+    - pycparser==2.20
     - pydot==1.4.1
     - pygments==2.6.1
     - pyparsing==2.4.7
+    - pyro-api==0.1.2
+    - pyro-ppl==1.5.1
+    - pyrsistent==0.17.3
+    - pytest==6.0.1
     - python-dateutil==2.8.1
     - python-igraph==0.8.2
     - pytz==2020.1
     - pyzmq==19.0.2
     - requests==2.24.0
     - requests-oauthlib==1.3.0
+    - retrying==1.3.3
+    - rpy2==3.3.5
     - rsa==4.6
+    - scikit-learn==0.23.2
     - scipy==1.4.1
     - seaborn==0.10.1
-    - six==1.15.0
+    - send2trash==1.5.0
     - statsmodels==0.11.1
     - tensorboard==2.3.0
     - tensorboard-plugin-wit==1.7.0
     - tensorflow==2.3.0
     - tensorflow-estimator==2.3.0
+    - tensorflow-probability==0.11.0
     - termcolor==1.1.0
+    - terminado==0.8.3
+    - testpath==0.4.4
     - texttable==1.6.2
+    - threadpoolctl==2.1.0
+    - toml==0.10.1
     - tornado==6.0.4
     - tqdm==4.48.2
     - traitlets==4.3.3
+    - tzlocal==2.1
     - urllib3==1.25.10
     - wcwidth==0.2.5
+    - webencodings==0.5.1
     - werkzeug==1.0.1
+    - widgetsnbextension==3.5.1
     - wrapt==1.12.1
 prefix: //miniconda3/envs/leg_math_new

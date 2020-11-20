@@ -46,8 +46,8 @@ model_params = {
                 "k_dim": data_params["k_dim"],
                 "k_time": data_params["k_time"],
                 "init_leg_embedding": vote_data["init_embedding"],
-                # "yes_point_dropout": 0.0,
-                # "no_point_dropout": 0.0,
+                "yes_point_dropout": 0.0,
+                "no_point_dropout": 0.0,
                 "combined_dropout": 0.0,
                 "dropout_type": "timestep",
                 "gaussian_noise": 0.0,
@@ -83,6 +83,8 @@ history = model.fit(x_train, vote_data["y_train"], epochs=5000, batch_size=1,
                     validation_data=(x_test, vote_data["y_test"]), verbose=2, callbacks=callbacks,
                     class_weight={0: sample_weights[0],
                                   1: sample_weights[1]})
+
+model.__dict__
 
 params_and_results = data_params.copy()
 params_and_results.update(model_params)

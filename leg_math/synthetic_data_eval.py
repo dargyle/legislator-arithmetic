@@ -148,7 +148,7 @@ for i in range(1, top_dim):
     model.summary()
     # SVG(model_to_dot(model).create(prog='dot', format='svg'))
 
-    # opt = tfp.optimizer.VariationalSGD(batch_size=1024,
+    # opt = tfp.optimizer.VariationalSGD(batch_size=1,
     #                                    total_num_examples=vote_data["N"],
     #                                    # use_single_learning_rate=True,
     #                                    burnin=100,
@@ -156,7 +156,8 @@ for i in range(1, top_dim):
     #                                    burnin_max_learning_rate=3.0,
     #                                    preconditioner_decay_rate=0.95,
     #                                    )
-    opt = tf.keras.optimizers.Nadam()
+    # opt = tf.keras.optimizers.Nadam()
+    opt = tfp.optimizer.VariationalSGD(batch_size=1, total_num_examples=vote_data["N"])
     model.compile(loss='binary_crossentropy', optimizer=opt, metrics=['accuracy'])
 
     callbacks = [
@@ -165,7 +166,7 @@ for i in range(1, top_dim):
                  # GetBest(monitor='val_loss', verbose=1, mode='auto'),
                  ModelCheckpoint(DATA_PATH + '/temp/model_weights_{epoch}.hdf5'),
                  TerminateOnNaN()]
-    history = model.fit(x_train, vote_data["y_train"], epochs=5000, batch_size=1024,
+    history = model.fit(x_train, vote_data["y_train"], epochs=5000, batch_size=1,
                         validation_data=(x_test, vote_data["y_test"]), verbose=2, callbacks=callbacks,
                         class_weight={0: sample_weights[0],
                                       1: sample_weights[1]})
@@ -383,19 +384,19 @@ plot_data["Model"] = plot_data["Model"].map({"nn_train": "NN-NOMINATE (train)",
 
 ax = sns.lineplot(data=plot_data[(plot_data["metric"] == "log_loss")],
                   x="k_dim", y="score", estimator=None, hue="Model", marker="o")
-ax = sns.lineplot(data=plot_data[(plot_data["metric"] == "log_loss") & (plot_data["algorithm"] == "wnominate")],
-                  x="k_dim", y="score", estimator=None, hue="Model", marker="^")
-ax = sns.lineplot(data=plot_data[(plot_data["metric"] == "log_loss") & (plot_data["algorithm"] == "nn")],
-                  x="k_dim", y="score", estimator=None, hue="Model", marker="^")
+# ax = sns.lineplot(data=plot_data[(plot_data["metric"] == "log_loss") & (plot_data["algorithm"] == "wnominate")],
+#                   x="k_dim", y="score", estimator=None, hue="Model", marker="^")
+# ax = sns.lineplot(data=plot_data[(plot_data["metric"] == "log_loss") & (plot_data["algorithm"] == "nn")],
+#                   x="k_dim", y="score", estimator=None, hue="Model", marker="^")
 ax.set(xlim=(0.9, 5.1), xticks=range(1, top_dim))
 fig = ax.get_figure()
-fig.show()
+fig
 # fig.savefig(, bbox_inches='tight')
 fig.clf()
 
 plt.figure(1)
 plt.subplot(211)
-ax = sns.lineplot(data=plot_data[plot_data["metric"] == "log_loss"], y="score", x="k_dim", hue="algorithm", condition="dataset", 
+ax = sns.lineplot(data=plot_data[plot_data["metric"] == "log_loss"], y="score", x="k_dim", hue="algorithm", condition="dataset",
                   err_style=None, marker="o")
 ax.set(xlim=(0.9, 5.1), xticks=range(1, 8))
 fig = ax.get_figure()
