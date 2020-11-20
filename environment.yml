@@ -4,8 +4,8 @@ channels:
   - defaults
   - anaconda
   - conda-forge
-  - s3://conda-packages
-  - s3://fn-research/conda-packages
+  # - s3://conda-packages
+  # - s3://fn-research/conda-packages
 dependencies:
   - blas=1.0=mkl
   - ca-certificates=2020.10.14=0
