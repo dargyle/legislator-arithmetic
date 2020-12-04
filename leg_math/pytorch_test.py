@@ -29,6 +29,8 @@ from constants import DATA_PATH
 # parser.add_argument('--response-patterns', help='file with response pattern data', required=True)
 # args = parser.parse_args()
 
+
+
 gpu = False
 
 device = torch.device('cpu')
@@ -113,14 +115,14 @@ from pyro.infer.mcmc import MCMC, NUTS
 from py_irt.models.one_param_logistic import OneParamLog
 
 nuts_kernel = NUTS(m.model_vague, adapt_step_size=True)
-hmc_posterior = MCMC(nuts_kernel, num_samples=1000, warmup_steps=100)
+hmc_posterior = MCMC(nuts_kernel, num_samples=1000, warmup_steps=100, num_chains=2)
 hmc_posterior.run(models, items, responses)
 
 hmc_posterior.summary()
 
 type(hmc_posterior)
 theta_sum = m.summary(hmc_posterior, ['theta']).items()
-b_sum = self.summary(hmc_posterior, ['b']).items()
+b_sum = m.summary(hmc_posterior, ['b']).items()
 
 # 5. once model is fit, write outputs (diffs and thetas) to disk,
 #       retaining original modelIDs and itemIDs so we can use them
