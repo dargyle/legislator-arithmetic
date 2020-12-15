@@ -17,7 +17,10 @@ from leg_math.keras_helpers import GetBest, NNnominate
 from IPython.display import SVG
 
 from constants import DATA_PATH
+
 EU_PATH = DATA_PATH + '/eu/'
+if not os.path.exists(EU_PATH):
+    os.makedirs(EU_PATH)
 
 most_recent_parties = pd.read_pickle(EU_PATH + "most_recent_parties.pkl")
 

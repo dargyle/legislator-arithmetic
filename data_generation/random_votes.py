@@ -1,6 +1,7 @@
 """
 A script to generate random votes with known properties
 """
+import os
 import numpy as np
 import pandas as pd
 
@@ -10,7 +11,9 @@ from data_generation.data_processing import drop_unanimous, process_data, prep_r
 
 from constants import DATA_PATH
 
-SYNTHETIC_PATH = DATA_PATH + '/synthetic/'
+SYNTHETIC_PATH = DATA_PATH + 'synthetic/'
+if not os.path.exists(SYNTHETIC_PATH):
+    os.makedirs(SYNTHETIC_PATH)
 
 
 def generate_nominate_votes(n_leg=100,

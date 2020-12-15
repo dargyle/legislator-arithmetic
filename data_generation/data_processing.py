@@ -131,7 +131,7 @@ def process_data(vote_df, congress_cutoff=0, k_dim=1, k_time=0,
 
     print("Limit the sample")
     if congress_cutoff:
-        vote_df = vote_df[vote_df["congress"] >= congress_cutoff]
+        vote_df = vote_df[vote_df["congress"] >= congress_cutoff].copy()
 
     if k_time > 0:
         first_session = vote_df.groupby("leg_id")[["congress"]].agg(["min", "max"])

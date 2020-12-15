@@ -1,3 +1,4 @@
+import os
 import numpy as np
 import pandas as pd
 
@@ -12,6 +13,8 @@ from tqdm import tqdm
 from constants import DATA_PATH
 
 COSPONSOR_PATH = DATA_PATH + "cosponsor/"
+if not os.path.exists(COSPONSOR_PATH):
+    os.makedirs(COSPONSOR_PATH)
 
 
 def get_leg_info():

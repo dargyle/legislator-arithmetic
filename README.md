@@ -43,10 +43,11 @@ acquire the EU vote data.
 ## Data acquisition and generation
 
 There are several datasets used in this project, all of which can be generated programmatically
-(assuming none of the links have broken in the interim...)
+(assuming none of the links have broken in the interim...). A couple of the datasets our fairly, so
+this may take some time.
 
 -   Synthetic vote data assuming a specific data generating process with known parameters. Running the
-    file `./data_generation/synthetic_votes.py` will generate and save the random votes files necessary
+    file `./data_generation/random_votes.py` will generate and save the random votes files necessary
     for this project. The functions there can also be imported and used directly if desired.
 
 -   US data

@@ -20,6 +20,8 @@ import urllib.request
 from constants import DATA_PATH
 EU_PATH = DATA_PATH + '/eu/'
 
+if not os.path.exists(EU_PATH):
+    os.makedirs(EU_PATH)
 
 PARL_TRACK = "https://parltrack.org/dumps/"
 
