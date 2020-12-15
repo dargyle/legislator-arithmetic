@@ -60,8 +60,8 @@ votes_test = torch.tensor(x_test[1].flatten(), dtype=torch.long, device=device)
 responses_test = torch.tensor(vote_data["y_test"].flatten(), dtype=torch.float, device=device)
 
 # Set some constants
-num_legs = len(set(legs))
-num_votes = len(set(votes))
+num_legs = len(set(legs.numpy()))
+num_votes = len(set(votes.numpy()))
 
 
 def ideal_point_model(legs, votes, y=None, k_dim=1):
@@ -242,10 +242,10 @@ ideal_points_mcmc = pd.concat([
 
 # Compare thre results of the two processes
 comp_ideal = pd.concat([ideal_points, ideal_points_mcmc], axis=1)
-comp_ideal.describe()
-comp_ideal.corr()
-comp_ideal.plot(kind='scatter', x="loc_1", y="loc_1_mcmc")
-comp_ideal.plot(kind='scatter', x="scale_1_mcmc", y="scale_1")
+# comp_ideal.describe()
+# comp_ideal.corr()
+# comp_ideal.plot(kind='scatter', x="loc_1", y="loc_1_mcmc")
+# comp_ideal.plot(kind='scatter', x="scale_1_mcmc", y="scale_1")
 
 import seaborn as sns
 sns.distplot(pd.Series(samples["theta"][:, 0, 0].numpy()), bins=25)
@@ -254,7 +254,7 @@ temp_d = dist.Normal(ideal_points.loc[0, "loc_1"], ideal_points.loc[0, "scale_1"
 sns.distplot(pd.Series([temp_d().item() for k in range(100)]), bins=25)
 
 
-def normalize_ideal_points(theta, beta, alpha, verify_predictions=True):
+def normalize_ideal_points(theta, beta, alpha, verify_predictions=False):
     '''Normalize all ideal points to N(0,1) and adjust other parameters accordingly
 
     Inputs are assumed to be 3 dimensional tensors where the first dimension is the number
