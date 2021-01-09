@@ -82,53 +82,6 @@ def process_data(vote_df, congress_cutoff=0, k_dim=1, k_time=0,
         vote_data (dict): a dictionary containing all the data necessary to fit
             the model
     '''
-    # print("Load raw data")
-    # if isinstance(data_type, str):
-    #     if data_type == "votes":
-    #         vote_df = pd.read_feather(DATA_PATH + "vote_df_cleaned.feather")
-    #     if data_type == "cosponsor":
-    #         # vote_df = pd.read_feather(DATA_PATH + "cosponsor/govtrack_cosponsor_data.feather")
-    #         vote_df = pd.read_feather(DATA_PATH + "cosponsor/govtrack_cosponsor_data_smart_oppose.feather")
-    #         vote_df = vote_df.drop("icpsr_id", axis=1)
-    #         sponsor_counts = vote_df.groupby("vote_id")["vote"].sum()
-    #         min_sponsors = 1
-    #         multi_sponsored_bills = sponsor_counts[sponsor_counts >= min_sponsors]
-    #         multi_sponsored_bills.name = "sponsor_counts"
-    #         vote_df = pd.merge(vote_df, multi_sponsored_bills.to_frame(), left_on="vote_id", right_index=True)
-    #     if data_type == "test":
-    #         # roll_call_object = pd.read_csv(DATA_PATH + "/test_votes.csv", index_col=0)
-    #         # vote_df = roll_call_object.replace({1: 1,
-    #         #                                     2: 1,
-    #         #                                     3: 1,
-    #         #                                     4: 0,
-    #         #                                     5: 0,
-    #         #                                     6: 0,
-    #         #                                     7: np.nan,
-    #         #                                     8: np.nan,
-    #         #                                     9: np.nan,
-    #         #                                     0: np.nan})
-    #         # vote_df = vote_df.stack().reset_index()
-    #         # assert not vote_df.isnull().any().any(), "mising codes in votes"
-    #         # vote_df.columns = ["leg_id",  "vote_id", "vote"]
-    #         # vote_df["congress"] = 115
-    #         # vote_df["chamber"] = "s"
-    #         # leg_data = pd.read_csv(DATA_PATH + "/test_legislators.csv", index_col=0)
-    #         # if "partyCode" in leg_data.columns:
-    #         #     leg_data["init_value"] = leg_data["partyCode"].map({100: -1,
-    #         #                                                         200: 1})
-    #         # else:
-    #         #     leg_data["init_value"] = leg_data["party.1"].map({100: -1,
-    #         #                                                       200: 1})
-    #         #
-    #         # # leg_data["init_value"] = 1
-    #         # vote_df = pd.merge(vote_df, leg_data[["init_value"]], left_on="leg_id", right_index=True)
-    #         vote_df = pd.read_feather(DATA_PATH + "/test_votes_df.feather")
-    #         vote_df = vote_df.rename(columns={"bill_id": "vote_id"})
-    #         vote_df["init_value"] = vote_df["partyCode"].map({100: -1, 200: 1})
-    # else:
-    #     # Assume that the data_type argument is a vote dataframe
-    #     vote_df = data_type
-
     print("Limit the sample")
     if congress_cutoff:
         vote_df = vote_df[vote_df["congress"] >= congress_cutoff].copy()
@@ -161,8 +114,12 @@ def process_data(vote_df, congress_cutoff=0, k_dim=1, k_time=0,
     test_data = test_data[test_data["leg_id"].isin(train_data["leg_id"])]
     test_data = test_data[test_data["vote_id"].isin(train_data["vote_id"])]
 
-    time_passed_train = [(train_data["time_passed"] ** i).values for i in range(0, k_time + 1)]
-    time_passed_test = [(test_data["time_passed"] ** i).values for i in range(0, k_time + 1)]
+    if k_time > 0:
+        time_passed_train = [(train_data["time_passed"] ** i).values for i in range(0, k_time + 1)]
+        time_passed_test = [(test_data["time_passed"] ** i).values for i in range(0, k_time + 1)]
+    else:
+        time_passed_train = []
+        time_passed_test = []
 
     leg_ids = train_data["leg_id"].unique()
     vote_ids = train_data["vote_id"].unique()
