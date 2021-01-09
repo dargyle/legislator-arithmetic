@@ -44,7 +44,7 @@ data_params = dict(
                vote_df=vote_df,
                congress_cutoff=110,
                k_dim=k_dim,
-               k_time=1,
+               k_time=2,
                covariates_list=["in_majority"],
                unanimity_check=False,
                )
@@ -84,10 +84,9 @@ def ideal_point_model_covar(legs, votes, y=None, covariates=None, time_passed=No
     # Set up parameter plates for all of the parameters
     if time_passed is not None:
         k_time = time_passed.shape[1]
-        time_tensor = torch.cat([torch.ones(time_passed.shape[0], device=device).unsqueeze(-1), time_passed], axis=1)
         with pyro.plate('thetas', num_legs, dim=-3, device=device):
-            ideal_point = pyro.sample('theta', dist.Normal(torch.zeros(k_dim, k_time + 1, device=device), torch.ones(k_dim, k_time + 1, device=device)))
-        final_ideal_point = torch.sum(ideal_point[legs] * time_tensor.unsqueeze(-1), axis=1)
+            ideal_point = pyro.sample('theta', dist.Normal(torch.zeros(k_dim, k_time, device=device), torch.ones(k_dim, k_time, device=device)))
+        final_ideal_point = torch.sum(ideal_point[legs] * time_passed[votes].unsqueeze(dim=1), axis=2)
         # ideal_point[[1, 1]] * time_tensor[[1, 3]].unsqueeze(-1)
         # ideal_point[[1, 1]] * time_tensor[[1, 3]].unsqueeze(-1)
         # torch.sum(ideal_point[[1, 1]] * time_tensor[[1, 3]].unsqueeze(-1), axis=1)

@@ -136,46 +136,50 @@ def process_data(vote_df, congress_cutoff=0, k_dim=1, k_time=0,
     if k_time > 0:
         first_session = vote_df.groupby("leg_id")[["congress"]].agg(["min", "max"])
         first_session.columns = ["first_session", "last_session"]
+        first_session["sessions_served"] = first_session["last_session"] - first_session["first_session"]
         # first_session["first_session"].value_counts()
         vote_df = pd.merge(vote_df, first_session, left_on="leg_id", right_index=True)
         vote_df["time_passed"] = vote_df["congress"] - vote_df["first_session"]
 
-    leg_ids = vote_df["leg_id"].unique()
-    vote_ids = vote_df["vote_id"].unique()
-
-    leg_crosswalk = pd.Series(leg_ids).to_dict()
-    leg_crosswalk_rev = dict((v, k) for k, v in leg_crosswalk.items())
-    vote_crosswalk = pd.Series(vote_ids).to_dict()
-    vote_crosswalk_rev = dict((v, k) for k, v in vote_crosswalk.items())
-
-    vote_df["leg_id_num"] = vote_df["leg_id"].map(leg_crosswalk_rev)
-    vote_df["vote_id_num"] = vote_df["vote_id"].map(vote_crosswalk_rev)
     # Shuffle the order of the vote data
     # THIS IS IMPORTANT, otherwise will_select just most recent bills
     vote_df = vote_df.sample(frac=1, replace=False, random_state=42)
 
-    init_embedding = vote_df[["leg_id_num", "init_value"]].drop_duplicates("leg_id_num").set_index("leg_id_num").sort_index()
-
     if "vote_weight" not in vote_df.columns:
         vote_df["vote_weight"] = 1.0
-
-    assert not vote_df.isnull().any().any(), "Missing value in data"
 
     N = len(vote_df)
     key_index = round(validation_split * N)
     print(f"key_index: {key_index}")
 
     # Keep only votes that are valid in the dataset
-    train_data = vote_df.iloc[:(N - key_index), :]
+    train_data = vote_df.iloc[:(N - key_index), :].copy()
     if unanimity_check:
         train_data = drop_unanimous(train_data, min_vote_count=10, unanimity_percentage=0.001)
     # Ensure test data only contains valid entries
     test_data = vote_df.iloc[(N - key_index):, :]
-    test_data = test_data[test_data["leg_id_num"].isin(train_data["leg_id_num"])]
-    test_data = test_data[test_data["vote_id_num"].isin(train_data["vote_id_num"])]
+    test_data = test_data[test_data["leg_id"].isin(train_data["leg_id"])]
+    test_data = test_data[test_data["vote_id"].isin(train_data["vote_id"])]
 
-    time_passed_train = [(train_data["time_passed"] ** i).values for i in range(1, k_time + 1)]
-    time_passed_test = [(test_data["time_passed"] ** i).values for i in range(1, k_time + 1)]
+    time_passed_train = [(train_data["time_passed"] ** i).values for i in range(0, k_time + 1)]
+    time_passed_test = [(test_data["time_passed"] ** i).values for i in range(0, k_time + 1)]
+
+    leg_ids = train_data["leg_id"].unique()
+    vote_ids = train_data["vote_id"].unique()
+
+    leg_crosswalk = pd.Series(leg_ids).to_dict()
+    leg_crosswalk_rev = dict((v, k) for k, v in leg_crosswalk.items())
+    vote_crosswalk = pd.Series(vote_ids).to_dict()
+    vote_crosswalk_rev = dict((v, k) for k, v in vote_crosswalk.items())
+
+    train_data["leg_id_num"] = train_data["leg_id"].map(leg_crosswalk_rev)
+    train_data["vote_id_num"] = train_data["vote_id"].map(vote_crosswalk_rev)
+    test_data["leg_id_num"] = test_data["leg_id"].map(leg_crosswalk_rev)
+    test_data["vote_id_num"] = test_data["vote_id"].map(vote_crosswalk_rev)
+
+    init_embedding = train_data[["leg_id_num", "init_value"]].drop_duplicates("leg_id_num").set_index("leg_id_num").sort_index()
+
+    assert not vote_df.isnull().any().any(), "Missing value in data"
 
     vote_data = {'J': len(leg_ids),
                  'M': len(vote_ids),
@@ -195,6 +199,7 @@ def process_data(vote_df, congress_cutoff=0, k_dim=1, k_time=0,
                  'covariates_test': test_data[covariates_list].values,
                  'vote_weight_train': train_data["vote_weight"].values,
                  'vote_weight_test': test_data["vote_weight"].values,
+                 'sessions_served': first_session.loc[leg_crosswalk_rev.keys(), "sessions_served"].values,
                  }
 
     # Export a pscl rollcall type object of the training data
@@ -248,7 +253,6 @@ def format_model_data(vote_data, data_params, weight_by_frequency=True):
         else:
             x_train = [vote_data["j_train"], vote_data["m_train"]]
             x_test = [vote_data["j_test"], vote_data["m_test"]]
-
     return x_train, x_test, sample_weights
 
 
