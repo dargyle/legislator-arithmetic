@@ -11,6 +11,8 @@ import pyro.contrib.autoguide as autoguides
 
 from pyro.infer.autoguide.initialization import init_to_value
 
+from pyro.ops.stats import hpdi, waic
+
 import pandas as pd
 import numpy as np
 
@@ -24,7 +26,7 @@ from sklearn.metrics import accuracy_score
 pyro.enable_validation(True)
 
 
-def bayes_irt_basic(legs, votes, y=None, k_dim=1):
+def bayes_irt_basic(legs, votes, y=None, k_dim=1, device=None):
     """Define a core ideal point model
 
     Args:
@@ -33,14 +35,18 @@ def bayes_irt_basic(legs, votes, y=None, k_dim=1):
         y: a tensor of vote choices
         k_dim: desired dimensions of the models
     """
+    # Set some constants
+    n_legs = len(set(legs.numpy()))
+    n_votes = len(set(votes.numpy()))
+
     # Set up parameter plates for all of the parameters
-    with pyro.plate('thetas', num_legs, dim=-2, device=device):
+    with pyro.plate('thetas', n_legs, dim=-2, device=device):
         ideal_point = pyro.sample('theta', dist.Normal(torch.zeros(k_dim, device=device), torch.ones(k_dim, device=device)))
 
-    with pyro.plate('betas', num_votes, dim=-2,  device=device):
+    with pyro.plate('betas', n_votes, dim=-2,  device=device):
         polarity = pyro.sample('beta', dist.Normal(torch.zeros(k_dim, device=device), 5.0 * torch.ones(k_dim, device=device)))
 
-    with pyro.plate('alphas', num_votes, device=device):
+    with pyro.plate('alphas', n_votes, device=device):
         popularity = pyro.sample('alpha', dist.Normal(torch.zeros(1, device=device), 5.0 * torch.ones(1, device=device)))
 
     # Used for debugging
@@ -65,7 +71,7 @@ def bayes_irt_basic(legs, votes, y=None, k_dim=1):
         return y
 
 
-def bayes_irt_full(legs, votes, y=None, covariates=None, time_passed=None, k_dim=1):
+def bayes_irt_full(legs, votes, y=None, covariates=None, time_passed=None, k_dim=1, device=None):
     """Define a core ideal point model
 
     Args:
@@ -74,35 +80,52 @@ def bayes_irt_full(legs, votes, y=None, covariates=None, time_passed=None, k_dim
         y: a tensor of vote choices
         k_dim: desired dimensions of the models
     """
+    n_legs = len(set(legs.numpy()))
+    n_votes = len(set(votes.numpy()))
+    if covariates is not None:
+        n_covar = covariates.shape[1]
+
     # Set up parameter plates for all of the parameters
     if time_passed is not None:
         k_time = time_passed.shape[1]
-        with pyro.plate('thetas', num_legs, dim=-3, device=device):
+        with pyro.plate('thetas', n_legs, dim=-3, device=device):
             ideal_point = pyro.sample('theta', dist.Normal(torch.zeros(k_dim, k_time, device=device), torch.ones(k_dim, k_time, device=device)))
         final_ideal_point = torch.sum(ideal_point[legs] * time_passed[votes].unsqueeze(dim=1), axis=2)
         # ideal_point[[1, 1]] * time_tensor[[1, 3]].unsqueeze(-1)
         # ideal_point[[1, 1]] * time_tensor[[1, 3]].unsqueeze(-1)
         # torch.sum(ideal_point[[1, 1]] * time_tensor[[1, 3]].unsqueeze(-1), axis=1)
     else:
-        with pyro.plate('thetas', num_legs, dim=-2, device=device):
+        with pyro.plate('thetas', n_legs, dim=-2, device=device):
             final_ideal_point = pyro.sample('theta', dist.Normal(torch.zeros(k_dim, device=device), torch.ones(k_dim, device=device)))
 
-    with pyro.plate('betas', num_votes, dim=-2,  device=device):
+    with pyro.plate('betas', n_votes, dim=-2,  device=device):
         polarity = pyro.sample('beta', dist.Normal(torch.zeros(k_dim, device=device), 5.0 * torch.ones(k_dim, device=device)))
 
-    with pyro.plate('alphas', num_votes, device=device):
+    with pyro.plate('alphas', n_votes, device=device):
         popularity = pyro.sample('alpha', dist.Normal(torch.zeros(1, device=device), 5.0 * torch.ones(1, device=device)))
 
+    # Slice the parameter arrays according to the data
+    use_ideal_point = torch.index_select(final_ideal_point, -2, legs)
+    use_polarity = torch.index_select(polarity, -2, votes)
+    use_popularity = torch.index_select(popularity, -1, votes)
+
+    temp_ideal = torch.sum(use_ideal_point * use_polarity, dim=-1)
+
     if covariates is not None:
-        with pyro.plate('coefs', num_covar, device=device):
+        with pyro.plate('coefs', n_covar, device=device):
             coef = pyro.sample('coef', dist.Normal(torch.zeros(1, device=device), 5.0 * torch.ones(1, device=device)))
         # print(covariates.shape)
+        # print(coef.shape)
         # print(coef.unsqueeze(-1).shape)
-        covar_combo = torch.mm(covariates, coef.unsqueeze(-1)).flatten()
-        # print(covar_combo.shape)
-        logit = torch.sum(final_ideal_point[legs] * polarity[votes], dim=-1) + popularity[votes] + covar_combo
+        # print('ideal_shape: {}'.format(final_ideal_point[legs].shape))
+        # print('polarity_shape: {}'.format(polarity[votes].shape))
+        covar_combo = torch.matmul(covariates, coef.unsqueeze(-1)).squeeze()
+        # print('temp_ideal_shape: {}'.format(temp_ideal.shape))
+        # print('popularity_shape: {}'.format(popularity[votes].shape))
+        # print('covar_combo_shape: {}'.format(covar_combo.shape))
+        logit = temp_ideal + use_popularity + covar_combo
     else:
-        logit = torch.sum(final_ideal_point[legs] * polarity[votes], dim=-1) + popularity[votes]
+        logit = temp_ideal + use_popularity
     # Used for debugging
     # print('ideal_shape: {}'.format(ideal_point[legs].shape))
     # print('polarity_shape: {}'.format(polarity[votes].shape))
@@ -147,7 +170,6 @@ def normalize_ideal_points(theta, beta, alpha, verify_predictions=False):
     ideal_std_all = theta.std(axis=(0, 1))
 
     theta_t = (theta - ideal_mean_all) / ideal_std_all
-    theta_t.mean(axis=(0,1))
     beta_t = beta * ideal_std_all
     alpha_t = alpha + (beta * ideal_mean_all).sum(axis=2)
 
@@ -172,6 +194,164 @@ if __name__ == '__main__':
     else:
         device = torch.device('cpu')
 
+
+    # Generate datset that has 2 dimensions and has a covariate
+    votes = generate_nominate_votes(n_leg=50, n_votes=100, beta=15.0, beta_covar=5.0, k_dim=2, w=np.array([1.0, 1.0]), cdf_type="logit", drop_unanimous_votes=False, replication_seed=42)
+    vote_df = votes.reset_index()
+
+    k_dim = 2
+    data_params = dict(
+                   vote_df=vote_df,
+                   congress_cutoff=110,
+                   k_dim=k_dim,
+                   k_time=0,
+                   covariates_list=["in_majority"],
+                   unanimity_check=False,
+                   validation_split=0.0,
+                   )
+    vote_data = process_data(**data_params)
+    custom_init_values = torch.tensor(vote_data["init_embedding"].values, dtype=torch.float, device=device)
+
+    x_train, x_test, sample_weights = format_model_data(vote_data, data_params, weight_by_frequency=False)
+
+    # Convert training and test data to tensors
+    legs = torch.tensor(x_train[0].flatten(), dtype=torch.long, device=device)
+    votes = torch.tensor(x_train[1].flatten(), dtype=torch.long, device=device)
+    responses = torch.tensor(vote_data["y_train"].flatten(), dtype=torch.float, device=device)
+    covariates = torch.tensor(vote_data["covariates_train"], dtype=torch.float, device=device)
+
+    legs_test = torch.tensor(x_test[0].flatten(), dtype=torch.long, device=device)
+    votes_test = torch.tensor(x_test[1].flatten(), dtype=torch.long, device=device)
+    responses_test = torch.tensor(vote_data["y_test"].flatten(), dtype=torch.float, device=device)
+    covariates_test = torch.tensor(vote_data["covariates_test"], dtype=torch.float, device=device)
+
+    optim = Adam({'lr': 0.1})
+
+    # Define the guide
+    # guide = autoguides.AutoNormal(bayes_irt_full)
+    guide = autoguides.AutoNormal(bayes_irt_full, init_loc_fn=init_to_value(values={'theta': custom_init_values}))
+    # guide = ideal_point_guide(legs, votes, responses, i)
+
+    # Setup the variational inference
+    svi = SVI(bayes_irt_full, guide, optim, loss=Trace_ELBO())
+    # svi.step(legs, votes, responses, covariates, k_dim=k_dim)
+
+    # Run variational inference
+    pyro.clear_param_store()
+    for j in range(2000):
+        loss = svi.step(legs, votes, responses, covariates=covariates, k_dim=k_dim)
+        if j % 100 == 0:
+            print("[epoch %04d] loss: %.4f" % (j + 1, loss))
+
+    # pyro.param("AutoNormal.locs.theta").data.numpy()
+    # pyro.param("AutoNormal.locs.coef").data.numpy()
+    # pyro.param("AutoNormal.scales.coef").data.numpy()
+
+    init_values = init_to_value(values={"theta": pyro.param("AutoNormal.locs.theta").data,
+                                        "beta": pyro.param("AutoNormal.locs.beta").data,
+                                        "alpha": pyro.param("AutoNormal.locs.alpha").data,
+                                        })
+
+    # Set up sampling alrgorithm
+    nuts_kernel = NUTS(bayes_irt_full, adapt_step_size=True, jit_compile=True, ignore_jit_warnings=True, init_strategy=init_values)
+    # For real inference should probably increase the number of samples, but this is slow and enough to test
+    hmc_posterior = MCMC(nuts_kernel, num_samples=1000, warmup_steps=500)
+    # Run the model
+    hmc_posterior.run(legs, votes, responses, covariates, k_dim=k_dim)
+
+    samples_1 = hmc_posterior.get_samples()
+    posterior_predictive_1 = pyro.infer.predictive.Predictive(bayes_irt_full, samples_1)
+    vectorized_trace_1 = posterior_predictive_1.get_vectorized_trace(legs, votes, covariates=covariates)
+
+    def make_log_joint(model):
+        def _log_joint(cond_data, *args, **kwargs):
+            conditioned_model = poutine.condition(model, data=cond_data)
+            trace = poutine.trace(conditioned_model).get_trace(*args, **kwargs)
+            return trace.log_prob_sum()
+        return _log_joint
+
+    guide_tr = poutine.trace(guide).get_trace(legs, votes, responses, covariates, k_dim=k_dim)
+    model_tr = poutine.trace(poutine.replay(bayes_irt_full, trace=guide_tr)).get_trace(legs, votes, responses, covariates, k_dim=k_dim)
+    monte_carlo_elbo = model_tr.log_prob_sum() - guide_tr.log_prob_sum()
+
+
+    poutine.trace(bayes_irt_full, legs, votes, covariates=covariates)
+
+
+    obs_name = "obs"
+    obs_site_1 = vectorized_trace_1.nodes[obs_name]
+    log_like_1 = obs_site_1["fn"].log_prob(obs_site_1["value"])
+
+    hmc_posterior.summary()
+
+    waic_1 = waic(log_like_1)
+    waic_1
+    hpdi_1 = hpdi(samples_1["coef"], prob=0.95)
+
+    pd.Series(samples_1["coef"].numpy()[:, 0]).hist()
+    pd.Series(samples_1["theta"].numpy()[:, 1, 0]).plot()
+
+    import arviz as az
+    az.waic(hmc_posterior)
+    az.loo(hmc_posterior)
+
+
+
+
+    # Define the guide
+    # guide = autoguides.AutoNormal(bayes_irt_full)
+    guide_2 = autoguides.AutoNormal(bayes_irt_full, init_loc_fn=init_to_value(values={'theta': custom_init_values}))
+    # guide = ideal_point_guide(legs, votes, responses, i)
+
+    # Setup the variational inference
+    svi_2 = SVI(bayes_irt_full, guide_2, optim, loss=Trace_ELBO())
+    # svi.step(legs, votes, responses, covariates, k_dim=k_dim)
+
+    # Run variational inference
+    pyro.clear_param_store()
+    for j in range(2000):
+        loss = svi_2.step(legs, votes, responses, k_dim=k_dim)
+        if j % 100 == 0:
+            print("[epoch %04d] loss: %.4f" % (j + 1, loss))
+
+    pyro.param("AutoNormal.locs.theta").data.numpy()
+
+    init_values = init_to_value(values={"theta": pyro.param("AutoNormal.locs.theta").data,
+                                        "beta": pyro.param("AutoNormal.locs.beta").data,
+                                        "alpha": pyro.param("AutoNormal.locs.alpha").data,
+                                        })
+
+    # Set up sampling alrgorithm
+    nuts_kernel = NUTS(bayes_irt_full, adapt_step_size=True, jit_compile=True, ignore_jit_warnings=True, init_strategy=init_values)
+    # For real inference should probably increase the number of samples, but this is slow and enough to test
+    hmc_posterior = MCMC(nuts_kernel, num_samples=250, warmup_steps=100)
+    # Run the model
+    hmc_posterior.run(legs, votes, responses, k_dim=k_dim)
+
+    hmc_posterior.summary()
+
+    samples = hmc_posterior.get_samples()
+    posterior_predictive = pyro.infer.predictive.Predictive(bayes_irt_full, samples)
+    vectorized_trace = posterior_predictive.get_vectorized_trace(legs, votes)
+    obs_name = "obs"
+    obs_site = vectorized_trace.nodes[obs_name]
+    log_like = obs_site["fn"].log_prob(obs_site["value"])
+
+    waic_2 = waic(log_like)
+
+    waic_1
+    waic_2
+
+    torch.exp((waic_1[0] - waic_2[0]) / 2)
+
+    import arviz as az
+    az.waic(hmc_posterior)
+    az.loo(hmc_posterior)
+
+
+
+
+
     # Read in the US data and subset to a simple test dataset (US Senate)
     vote_df = pd.read_feather(DATA_PATH + "vote_df_cleaned.feather")
     vote_df = vote_df[vote_df["chamber"] == "Senate"]
@@ -180,7 +360,7 @@ if __name__ == '__main__':
     k_dim = 2
     data_params = dict(
                    vote_df=vote_df,
-                   congress_cutoff=110,
+                   congress_cutoff=116,
                    k_dim=k_dim,
                    k_time=0,
                    covariates_list=[],
@@ -201,8 +381,8 @@ if __name__ == '__main__':
     responses_test = torch.tensor(vote_data["y_test"].flatten(), dtype=torch.float, device=device)
 
     # Set some constants
-    num_legs = len(set(legs.numpy()))
-    num_votes = len(set(votes.numpy()))
+    # n_legs = len(set(legs.numpy()))
+    # n_votes = len(set(votes.numpy()))
 
     # Setup the optimizer
     optim = Adam({'lr': 0.1})
@@ -293,6 +473,8 @@ if __name__ == '__main__':
     preds = posterior_predictive(legs, votes)["obs"].mean(axis=0).flatten(0)
     preds_test = posterior_predictive(legs_test, votes_test)["obs"].mean(axis=0).flatten(0)
 
+    posterior_predictive.get_vectorized_trace(legs, votes)
+
     # In sample metrics
     loss = torch.nn.BCELoss()
     train_log_loss = loss(preds, responses)
@@ -337,75 +519,129 @@ if __name__ == '__main__':
 
 
 
-    # Add a covariate
-    votes = generate_nominate_votes(n_leg=25, n_votes=100, beta=15.0, beta_covar=5.0, k_dim=2, w=np.array([1.0, 1.0]), cdf_type="logit", drop_unanimous_votes=False, replication_seed=42)
-    vote_df = votes.reset_index()
-
-    k_dim = 2
-    data_params = dict(
-                   vote_df=vote_df,
-                   congress_cutoff=110,
-                   k_dim=k_dim,
-                   k_time=1,
-                   covariates_list=["in_majority"],
-                   unanimity_check=False,
-                   )
-    vote_data = process_data(**data_params)
-    custom_init_values = torch.tensor(vote_data["init_embedding"].values, dtype=torch.float, device=device)
-
-    x_train, x_test, sample_weights = format_model_data(vote_data, data_params, weight_by_frequency=False)
-
-    # Convert training and test data to tensors
-    legs = torch.tensor(x_train[0].flatten(), dtype=torch.long, device=device)
-    votes = torch.tensor(x_train[1].flatten(), dtype=torch.long, device=device)
-    responses = torch.tensor(vote_data["y_train"].flatten(), dtype=torch.float, device=device)
-    covariates = torch.tensor(vote_data["covariates_train"], dtype=torch.float, device=device)
-
-    legs_test = torch.tensor(x_test[0].flatten(), dtype=torch.long, device=device)
-    votes_test = torch.tensor(x_test[1].flatten(), dtype=torch.long, device=device)
-    responses_test = torch.tensor(vote_data["y_test"].flatten(), dtype=torch.float, device=device)
-    covariates_test = torch.tensor(vote_data["covariates_test"], dtype=torch.float, device=device)
-
-    # Set some constants
-    num_legs = len(set(legs.numpy()))
-    num_votes = len(set(votes.numpy()))
-    num_covar = covariates.shape[1]
 
 
-    optim = Adam({'lr': 0.1})
 
-    # Define the guide
-    guide = autoguides.AutoNormal(bayes_irt_full)
-    # guide = autoguides.AutoNormal(ideal_point_model, init_loc_fn=init_to_value(values={'theta': custom_init_values}))
-    # guide = ideal_point_guide(legs, votes, responses, i)
 
-    # Setup the variational inference
-    svi = SVI(bayes_irt_full, guide, optim, loss=Trace_ELBO())
-    svi.step(legs, votes, responses, covariates, k_dim=k_dim)
-    # svi.step(torch.tensor([1,1]), torch.tensor([0,1]), torch.tensor([0.,1.]), k_dim=k_dim)
 
-    # Run variational inference
-    pyro.clear_param_store()
-    for j in range(2000):
-        loss = svi.step(legs, votes, responses, covariates, k_dim=k_dim)
-        if j % 100 == 0:
-            print("[epoch %04d] loss: %.4f" % (j + 1, loss))
 
-    pyro.param("AutoNormal.locs.theta").data.numpy()
-    pyro.param("AutoNormal.locs.coef").data.numpy()
-    pyro.param("AutoNormal.scales.coef").data.numpy()
-
-    init_values = init_to_value(values={"theta": pyro.param("AutoNormal.locs.theta").data,
-                                        "beta": pyro.param("AutoNormal.locs.beta").data,
-                                        "alpha": pyro.param("AutoNormal.locs.alpha").data,
-                                        })
-
-    # Set up sampling alrgorithm
-    nuts_kernel = NUTS(bayes_irt_full, adapt_step_size=True, jit_compile=True, ignore_jit_warnings=True, init_strategy=init_values)
-    # For real inference should probably increase the number of samples, but this is slow and enough to test
-    hmc_posterior = MCMC(nuts_kernel, num_samples=250, warmup_steps=100)
-    # Run the model
-    hmc_posterior.run(legs, votes, responses, covariates, k_dim=k_dim)
 
     samples = hmc_posterior.get_samples()
-    pd.DataFrame(samples["coef"].numpy()).hist()
+    samples.keys()
+    pd.DataFrame(samples["coef"].flatten().numpy()).hist()
+
+    samples["coef"][0].shape
+    posterior_predictive = pyro.infer.predictive.Predictive(bayes_irt_full, hmc_posterior.get_samples())
+    asdf = posterior_predictive.get_vectorized_trace(legs, votes, responses, covariates=covariates)
+    asdf.information_criterion()
+
+    num_samples = len(samples["coef"])
+    model = bayes_irt_full
+    model_args = [legs, votes]
+    model_kwargs = {"covariates": covariates}
+
+    import pyro.poutine as poutine
+    from pyro.poutine.util import prune_subsample_sites
+
+    def _guess_max_plate_nesting(model, args, kwargs):
+        """
+        Guesses max_plate_nesting by running the model once
+        without enumeration. This optimistically assumes static model
+        structure.
+        """
+        with poutine.block():
+            model_trace = poutine.trace(model).get_trace(*args, **kwargs)
+        sites = [site for site in model_trace.nodes.values()
+                 if site["type"] == "sample"]
+
+        dims = [frame.dim
+                for site in sites
+                for frame in site["cond_indep_stack"]
+                if frame.vectorized]
+        max_plate_nesting = -min(dims) if dims else 0
+        return max_plate_nesting
+
+    max_plate_nesting = _guess_max_plate_nesting(model, model_args, model_kwargs)
+    vectorize = pyro.plate("_num_predictive_samples", num_samples, dim=-max_plate_nesting-1)
+    model_trace = prune_subsample_sites(poutine.trace(model).get_trace(*model_args, **model_kwargs))
+    reshaped_samples = {}
+
+    for name, sample in samples.items():
+        sample_shape = sample.shape[1:]
+        sample = sample.reshape((num_samples,) + (1,) * (max_plate_nesting - len(sample_shape)) + sample_shape)
+        reshaped_samples[name] = sample
+
+    reshaped_samples["coef"].shape
+
+    if return_trace:
+        trace = poutine.trace(poutine.condition(vectorize(model), reshaped_samples)).get_trace(*model_args, **model_kwargs)
+        return trace
+
+    trace.__dict__
+
+    model_trace = poutine.trace(model).get_trace(*model_args, **model_kwargs)
+    model_trace.__dict__
+
+    from pyro.infer import TracePosterior
+    TracePosterior()(bayes_irt_full, hmc_posterior.get_samples())
+
+    hmc_posterior.__dict__.keys()
+    posterior_predictive.__dict__.keys()
+    trace = poutine.trace(bayes_irt_full).get_trace(*model_args, **model_kwargs)
+    trace.log_prob_sum()
+    trace.__dict__
+    trace.observation_nodes
+    trace.compute_log_prob()
+
+    obs_node = None
+    log_likelihoods = []
+    trace
+    for t in trace:
+        obs_nodes = trace.observation_nodes
+        if len(obs_nodes) > 1:
+            raise ValueError("Infomation criterion calculation only works for models "
+                             "with one observation node.")
+        if obs_node is None:
+            obs_node = obs_nodes[0]
+        elif obs_node != obs_nodes[0]:
+            raise ValueError("Observation node has been changed, expected {} but got {}"
+                             .format(obs_node, obs_nodes[0]))
+
+        trace.nodes.keys()
+        trace.nodes["theta"].log_prob
+        log_likelihoods.append(trace.nodes[obs_node]["fn"].log_prob(trace.nodes[obs_node]["value"]))
+
+
+    from pyro.ops.stats import hpdi, waic
+    waic(trace.log_prob_sum())
+
+    from arviz.data.io_pyro import PyroConverter, from_pyro
+    zxcv = PyroConverter(posterior=hmc_posterior, log_likelihood=True)
+    zxcv.log_likelihood_to_xarray()
+
+    import arviz as az
+    az.waic(zxcv)
+    az.waic(hmc_posterior, var_name="coef")
+
+    qwer = from_pyro(posterior=hmc_posterior)
+    qwer["log_likelihood"]
+
+    posterior_predictive.get_vectorized_trace(legs, votes, covariates=covariates)
+
+
+    samples = zxcv.posterior.get_samples(group_by_chain=False)
+    predictive = pyro.infer.Predictive(zxcv.model, samples)
+    vectorized_trace = predictive.get_vectorized_trace(*zxcv._args, **zxcv._kwargs)
+    for obs_name in zxcv.observations.keys():
+        obs_site = vectorized_trace.nodes[obs_name]
+        log_like = obs_site["fn"].log_prob(obs_site["value"]).detach().cpu().numpy()
+        shape = (zxcv.nchains, zxcv.ndraws) + log_like.shape[1:]
+        np.reshape(log_like, shape)
+
+    log_like = obs_site["fn"].log_prob(obs_site["value"])
+    waic(log_like)
+    waic(log_like[0, : , :])
+
+    vectorized_trace.__dict__
+
+    covariates.shape

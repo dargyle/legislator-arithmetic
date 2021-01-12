@@ -67,9 +67,9 @@ covariates_test = torch.tensor(vote_data["covariates_test"], dtype=torch.float, 
 time_passed_test = torch.tensor(np.stack(vote_data["time_passed_test"]).transpose(), dtype=torch.float, device=device)
 
 # Set some constants
-num_legs = len(set(legs.numpy()))
-num_votes = len(set(votes.numpy()))
-num_covar = covariates.shape[1]
+n_legs = len(set(legs.numpy()))
+n_votes = len(set(votes.numpy()))
+n_covar = covariates.shape[1]
 
 
 def ideal_point_model_covar(legs, votes, y=None, covariates=None, time_passed=None, k_dim=1):
@@ -84,24 +84,24 @@ def ideal_point_model_covar(legs, votes, y=None, covariates=None, time_passed=No
     # Set up parameter plates for all of the parameters
     if time_passed is not None:
         k_time = time_passed.shape[1]
-        with pyro.plate('thetas', num_legs, dim=-3, device=device):
+        with pyro.plate('thetas', n_legs, dim=-3, device=device):
             ideal_point = pyro.sample('theta', dist.Normal(torch.zeros(k_dim, k_time, device=device), torch.ones(k_dim, k_time, device=device)))
         final_ideal_point = torch.sum(ideal_point[legs] * time_passed[votes].unsqueeze(dim=1), axis=2)
         # ideal_point[[1, 1]] * time_tensor[[1, 3]].unsqueeze(-1)
         # ideal_point[[1, 1]] * time_tensor[[1, 3]].unsqueeze(-1)
         # torch.sum(ideal_point[[1, 1]] * time_tensor[[1, 3]].unsqueeze(-1), axis=1)
     else:
-        with pyro.plate('thetas', num_legs, dim=-2, device=device):
+        with pyro.plate('thetas', n_legs, dim=-2, device=device):
             final_ideal_point = pyro.sample('theta', dist.Normal(torch.zeros(k_dim, device=device), torch.ones(k_dim, device=device)))
 
-    with pyro.plate('betas', num_votes, dim=-2,  device=device):
+    with pyro.plate('betas', n_votes, dim=-2,  device=device):
         polarity = pyro.sample('beta', dist.Normal(torch.zeros(k_dim, device=device), 5.0 * torch.ones(k_dim, device=device)))
 
-    with pyro.plate('alphas', num_votes, device=device):
+    with pyro.plate('alphas', n_votes, device=device):
         popularity = pyro.sample('alpha', dist.Normal(torch.zeros(1, device=device), 5.0 * torch.ones(1, device=device)))
 
     if covariates is not None:
-        with pyro.plate('coefs', num_covar, device=device):
+        with pyro.plate('coefs', n_covar, device=device):
             coef = pyro.sample('coef', dist.Normal(torch.zeros(1, device=device), 5.0 * torch.ones(1, device=device)))
         # print(covariates.shape)
         # print(coef.unsqueeze(-1).shape)

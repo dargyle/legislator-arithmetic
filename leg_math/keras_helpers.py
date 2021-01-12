@@ -741,7 +741,7 @@ if __name__ == '__main__':
     item_model = NNitemresponse(**item_model_params)
 
     # opt = tfp.optimizer.VariationalSGD(batch_size=1024,
-    #                                    total_num_examples=vote_data["N"],
+    #                                    total_n_examples=vote_data["N"],
     #                                    # use_single_learning_rate=True,
     #                                    burnin=100,
     #                                    max_learning_rate=3.0,

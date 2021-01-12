@@ -93,6 +93,8 @@ def process_data(vote_df, congress_cutoff=0, k_dim=1, k_time=0,
         # first_session["first_session"].value_counts()
         vote_df = pd.merge(vote_df, first_session, left_on="leg_id", right_index=True)
         vote_df["time_passed"] = vote_df["congress"] - vote_df["first_session"]
+    else:
+        first_session = pd.DataFrame(columns=["sessions_served"], index=vote_df["leg_id"].unique())
 
     # Shuffle the order of the vote data
     # THIS IS IMPORTANT, otherwise will_select just most recent bills

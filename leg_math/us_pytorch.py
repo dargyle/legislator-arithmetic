@@ -37,7 +37,6 @@ else:
 vote_df = pd.read_feather(DATA_PATH + "vote_df_cleaned.feather")
 vote_df = vote_df[vote_df["chamber"] == "Senate"]
 
-# Single dimension for now
 k_dim = 2
 data_params = dict(
                vote_df=vote_df,
@@ -46,6 +45,7 @@ data_params = dict(
                k_time=0,
                covariates_list=["in_majority"],
                unanimity_check=False,
+               validation_split=0.0,
                )
 vote_data = process_data(**data_params)
 custom_init_values = torch.tensor(vote_data["init_embedding"].values, dtype=torch.float, device=device)
@@ -56,32 +56,34 @@ x_train, x_test, sample_weights = format_model_data(vote_data, data_params, weig
 legs = torch.tensor(x_train[0].flatten(), dtype=torch.long, device=device)
 votes = torch.tensor(x_train[1].flatten(), dtype=torch.long, device=device)
 responses = torch.tensor(vote_data["y_train"].flatten(), dtype=torch.float, device=device)
+covariates = torch.tensor(vote_data["covariates_train"], dtype=torch.float, device=device)
 
 legs_test = torch.tensor(x_test[0].flatten(), dtype=torch.long, device=device)
 votes_test = torch.tensor(x_test[1].flatten(), dtype=torch.long, device=device)
 responses_test = torch.tensor(vote_data["y_test"].flatten(), dtype=torch.float, device=device)
+covariates_test = torch.tensor(vote_data["covariates_test"], dtype=torch.float, device=device)
 
 # Set some constants
-num_legs = len(set(legs.numpy()))
-num_votes = len(set(votes.numpy()))
+n_legs = len(set(legs.numpy()))
+n_votes = len(set(votes.numpy()))
 
 # Setup the optimizer
 optim = Adam({'lr': 0.1})
 
 # Define the guide
-guide = autoguides.AutoNormal(bayes_irt_basic)
+guide = autoguides.AutoNormal(bayes_irt_full)
 # guide = autoguides.AutoNormal(bayes_irt_basic, init_loc_fn=init_to_value(values={'theta': custom_init_values}))
 # guide = ideal_point_guide(legs, votes, responses, i)
 
 # Setup the variational inference
-svi = SVI(bayes_irt_basic, guide, optim, loss=Trace_ELBO())
+svi = SVI(bayes_irt_full, guide, optim, loss=Trace_ELBO())
 # svi.step(legs, votes, responses, k_dim=k_dim)
 # svi.step(torch.tensor([1,1]), torch.tensor([0,1]), torch.tensor([0.,1.]), k_dim=k_dim)
 
 # Run variational inference
 pyro.clear_param_store()
 for j in range(2000):
-    loss = svi.step(legs, votes, responses, k_dim)
+    loss = svi.step(legs, votes, y=responses, covariates=covariates, k_dim=k_dim, device=device)
     if j % 100 == 0:
         print("[epoch %04d] loss: %.4f" % (j + 1, loss))
 
@@ -109,8 +111,8 @@ popularity = pd.DataFrame({"loc": pyro.param('AutoNormal.locs.alpha').data.numpy
 # The iterative process is necessary because we used an autoguide
 preds_list = []
 for _ in range(1000):
-    guide_trace = pyro.poutine.trace(guide).get_trace(legs, votes)
-    preds_list.append(pyro.poutine.replay(bayes_irt_basic, guide_trace)(legs, votes))
+    guide_trace = pyro.poutine.trace(guide).get_trace(legs, votes, covariates=covariates)
+    preds_list.append(pyro.poutine.replay(bayes_irt_full, guide_trace)(legs, votes, covariates=covariates))
 preds = torch.stack(preds_list)
 
 # Calculate log loss and accuracy scores, in sample
@@ -121,8 +123,8 @@ accuracy_score(responses, 1 * (preds.mean(axis=0) >= 0.5))
 # Generate test data predictions
 preds_list = []
 for _ in range(1000):
-    guide_trace = pyro.poutine.trace(guide).get_trace(legs_test, votes_test)
-    preds_list.append(pyro.poutine.replay(bayes_irt_basic, guide_trace)(legs_test, votes_test))
+    guide_trace = pyro.poutine.trace(guide).get_trace(legs_test, votes_test, covariates=covariates_test)
+    preds_list.append(pyro.poutine.replay(bayes_irt_full, guide_trace)(legs_test, votes_test, covariates=covariates_test))
 preds = torch.stack(preds_list)
 
 # Calculate log loss and accuracy scores, out of sample
@@ -130,6 +132,9 @@ predictions = pd.Series(preds.mean(axis=0).numpy())
 loss = torch.nn.BCELoss()
 loss(preds.mean(axis=0), responses_test)
 accuracy_score(responses_test, 1 * (preds.mean(axis=0) >= 0.5))
+
+pyro.param("AutoNormal.locs.coef").data
+pyro.param("AutoNormal.scales.coef").data
 
 #############
 # MCMC Time #
@@ -143,16 +148,16 @@ init_values = init_to_value(values={"theta": pyro.param("AutoNormal.locs.theta")
                                     })
 
 # Set up sampling alrgorithm
-nuts_kernel = NUTS(bayes_irt_basic, adapt_step_size=True, jit_compile=True, ignore_jit_warnings=True, init_strategy=init_values)
+nuts_kernel = NUTS(bayes_irt_full, adapt_step_size=True, jit_compile=True, ignore_jit_warnings=True, init_strategy=init_values)
 # For real inference should probably increase the number of samples, but this is slow and enough to test
 hmc_posterior = MCMC(nuts_kernel, num_samples=250, warmup_steps=100)
 # Run the model
-hmc_posterior.run(legs, votes, responses, k_dim=k_dim)
+hmc_posterior.run(legs, votes, responses, covariates=covariates, k_dim=k_dim)
 
 # Generate model predictions based on the posterior samples
-posterior_predictive = pyro.infer.predictive.Predictive(bayes_irt_basic, hmc_posterior.get_samples())
-preds = posterior_predictive(legs, votes)["obs"].mean(axis=0).flatten(0)
-preds_test = posterior_predictive(legs_test, votes_test)["obs"].mean(axis=0).flatten(0)
+posterior_predictive = pyro.infer.predictive.Predictive(bayes_irt_full, hmc_posterior.get_samples())
+preds = posterior_predictive(legs, votes, covariates=covariates)["obs"].mean(axis=0).flatten(0)
+preds_test = posterior_predictive(legs_test, votes_test, covariates=covariates_test)["obs"].mean(axis=0).flatten(0)
 
 # In sample metrics
 loss = torch.nn.BCELoss()
@@ -176,6 +181,8 @@ ideal_points_mcmc = pd.concat([
                         pd.DataFrame(samples["theta"].std(axis=0).numpy(), columns=['scale_{}_mcmc'.format(j + 1) for j in range(k_dim)]),
                         ], axis=1)
 
+sns.distplot(pd.DataFrame(samples["coef"].numpy()))
+
 # Compare thre results of the two processes
 comp_ideal = pd.concat([ideal_points, ideal_points_mcmc], axis=1)
 # comp_ideal.describe()
@@ -195,3 +202,28 @@ transformed_params_mcmc = normalize_ideal_points(samples["theta"], samples["beta
 transformed_params = normalize_ideal_points(pyro.param("AutoNormal.locs.theta").data.unsqueeze(0),
                                             pyro.param("AutoNormal.locs.beta").data.unsqueeze(0),
                                             pyro.param("AutoNormal.locs.alpha").data.unsqueeze(0))
+
+
+from pyro.ops.stats import hpdi, waic
+hpdi(samples["coef"], prob=0.95)
+waic(hmc_posterior)
+
+
+# samples = hmc_posterior.get_samples(group_by_chain=False)
+# predictive = pyro.infer.Predictive(self.model, samples)
+# vectorized_trace = predictive.get_vectorized_trace(*self._args, **self._kwargs)
+# for obs_name in self.observations.keys():
+#     obs_site = vectorized_trace.nodes[obs_name]
+#     log_like = obs_site["fn"].log_prob(obs_site["value"]).detach().cpu().numpy()
+#     shape = (self.nchains, self.ndraws) + log_like.shape[1:]
+#     data[obs_name] = np.reshape(log_like, shape)
+
+posterior_predictive(legs, votes, covariates=covariates)
+vectorized_trace = posterior_predictive.get_vectorized_trace(legs, votes, covariates=covariates)
+
+
+from pyro.infer.predictive import _predictive
+_predictive(self.model, posterior_samples, self.num_samples, return_trace=True, model_args=args, model_kwargs=kwargs)
+hmc_posterior.get_samples()["coef"]
+torch.mm(covariates, hmc_posterior.get_samples()["coef"])
+_predictive(bayes_irt_full, hmc_posterior.get_samples(), 250, return_trace=True, model_args=[legs, votes], model_kwargs={"covariates": covariates})

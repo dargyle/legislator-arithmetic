@@ -28,23 +28,23 @@ pyro.enable_validation(True)
 
 
 class wnom_basic(nn.Module):
-    def __init__(self, num_legs, num_votes, k_dim, pretrained=None):
+    def __init__(self, n_legs, n_votes, k_dim, pretrained=None):
         """
         Instantiate using the embeddings of legislator and bill info
         """
         super(wnom_basic, self).__init__()
         # self.ideal_points = nn.Embedding.from_pretrained(pretrained, max_norm=1.0)
-        # self.yes_points = nn.Embedding(num_embeddings=num_votes, embedding_dim=k_dim)
+        # self.yes_points = nn.Embedding(n_embeddings=n_votes, embedding_dim=k_dim)
         # nn.init.uniform_(self.yes_points.weight)
-        # self.no_points = nn.Embedding(num_embeddings=num_votes, embedding_dim=k_dim)
+        # self.no_points = nn.Embedding(n_embeddings=n_votes, embedding_dim=k_dim)
         # nn.init.uniform_(self.no_points.weight)
 
         if pretrained is not None:
             self.ideal_points = nn.Parameter(pretrained)
         else:
-            self.ideal_points = nn.Parameter(torch.rand(num_legs, k_dim))
-        self.yes_points = nn.Parameter(torch.rand(num_votes, k_dim))
-        self.no_points = nn.Parameter(torch.rand(num_votes, k_dim))
+            self.ideal_points = nn.Parameter(torch.rand(n_legs, k_dim))
+        self.yes_points = nn.Parameter(torch.rand(n_votes, k_dim))
+        self.no_points = nn.Parameter(torch.rand(n_votes, k_dim))
 
         self.w = nn.Parameter(0.5 * torch.ones((k_dim)))
         self.beta = nn.Parameter(torch.tensor(5.0))
@@ -78,20 +78,20 @@ class wnom_basic(nn.Module):
 
 
 class wnom_full(nn.Module):
-    def __init__(self, num_legs, num_votes, k_dim, pretrained=None, k_time=None):
+    def __init__(self, n_legs, n_votes, k_dim, pretrained=None, k_time=None):
         """
         Instantiate using the embeddings of legislator and bill info
         """
         super(wnom_full, self).__init__()
         if k_time is not None:
-            self.ideal_points = nn.Parameter((torch.rand(num_legs, k_dim, k_time + 1) - 0.5))
+            self.ideal_points = nn.Parameter((torch.rand(n_legs, k_dim, k_time + 1) - 0.5))
         else:
             if pretrained is not None:
                 self.ideal_points = nn.Parameter(pretrained)
             else:
-                self.ideal_points = nn.Parameter(torch.rand(num_legs, k_dim))
-        self.yes_points = nn.Parameter(torch.rand(num_votes, k_dim))
-        self.no_points = nn.Parameter(torch.rand(num_votes, k_dim))
+                self.ideal_points = nn.Parameter(torch.rand(n_legs, k_dim))
+        self.yes_points = nn.Parameter(torch.rand(n_votes, k_dim))
+        self.no_points = nn.Parameter(torch.rand(n_votes, k_dim))
 
         self.w = nn.Parameter(0.5 * torch.ones((k_dim)))
         self.beta = nn.Parameter(torch.tensor(5.0))
@@ -199,11 +199,11 @@ if __name__ == '__main__':
     # time_passed_test = torch.tensor(np.stack(vote_data["time_passed_test"]).transpose(), dtype=torch.float, device=device)
 
     # Set some constants
-    num_legs = len(set(legs.numpy()))
-    num_votes = len(set(votes.numpy()))
-    # num_covar = covariates.shape[1]
+    n_legs = len(set(legs.numpy()))
+    n_votes = len(set(votes.numpy()))
+    # n_covar = covariates.shape[1]
 
-    wnom_model = wnom_basic(num_legs, num_votes, k_dim, custom_init_values)
+    wnom_model = wnom_basic(n_legs, n_votes, k_dim, custom_init_values)
 
     criterion = nn.BCEWithLogitsLoss()
     optimizer = torch.optim.AdamW(wnom_model.parameters(), amsgrad=True)
@@ -322,15 +322,15 @@ if __name__ == '__main__':
     sessions_served = torch.tensor(vote_data["sessions_served"])
 
     # Set some constants
-    num_legs = len(set(legs.numpy()))
-    num_votes = len(set(votes.numpy()))
-    # num_covar = covariates.shape[1]
+    n_legs = len(set(legs.numpy()))
+    n_votes = len(set(votes.numpy()))
+    # n_covar = covariates.shape[1]
 
 
     ideal_points = wnom_model.ideal_points
     ideal_points[legs].shape
     time_tensor[votes].unsqueeze(1).shape
-    wnom_model = wnom_full(num_legs, num_votes, k_dim, pretrained=custom_init_values, k_time=1)
+    wnom_model = wnom_full(n_legs, n_votes, k_dim, pretrained=custom_init_values, k_time=1)
 
     criterion = nn.BCEWithLogitsLoss()
     optimizer = torch.optim.AdamW(wnom_model.parameters(), amsgrad=True)
@@ -431,11 +431,11 @@ if __name__ == '__main__':
     sessions_served = torch.tensor(vote_data["sessions_served"])
 
     # Set some constants
-    num_legs = len(set(legs.numpy()))
-    num_votes = len(set(votes.numpy()))
-    # num_covar = covariates.shape[1]
+    n_legs = len(set(legs.numpy()))
+    n_votes = len(set(votes.numpy()))
+    # n_covar = covariates.shape[1]
 
-    wnom_model = wnom_full(num_legs, num_votes, k_dim, pretrained=custom_init_values, k_time=data_params["k_time"])
+    wnom_model = wnom_full(n_legs, n_votes, k_dim, pretrained=custom_init_values, k_time=data_params["k_time"])
 
     criterion = nn.BCEWithLogitsLoss()
     optimizer = torch.optim.AdamW(wnom_model.parameters(), amsgrad=True)
@@ -472,7 +472,7 @@ if __name__ == '__main__':
         optimizer.step()
         # print(loss)
 
-    wnom_model.ideal_points[torch.arange(0, num_legs)]
+    wnom_model.ideal_points[torch.arange(0, n_legs)]
     time_tensor.unsqueeze(-1).shape
     wnom_model.ideal_points[legs] * time_tensor.unsqueeze(1)
     torch.sum(wnom_model.ideal_points[legs] * time_tensor.unsqueeze(1), axis=1)
@@ -480,19 +480,19 @@ if __name__ == '__main__':
 
     wnom_model.ideal_points[torch.arange(0, 100)].sum(dim=2).norm(2, dim=1)
 
-    pd.DataFrame(wnom_model.ideal_points[torch.arange(0, num_legs)].sum(dim=2).detach().numpy()).plot(kind="scatter", x=0, y=1)
-    pd.DataFrame(wnom_model.ideal_points[torch.arange(0, num_legs), :, 0].detach().numpy()).plot(kind="scatter", x=0, y=1)
-    wnom_model.ideal_points[torch.arange(0, num_legs)].sum(dim=2).norm(dim=1).max()
+    pd.DataFrame(wnom_model.ideal_points[torch.arange(0, n_legs)].sum(dim=2).detach().numpy()).plot(kind="scatter", x=0, y=1)
+    pd.DataFrame(wnom_model.ideal_points[torch.arange(0, n_legs), :, 0].detach().numpy()).plot(kind="scatter", x=0, y=1)
+    wnom_model.ideal_points[torch.arange(0, n_legs)].sum(dim=2).norm(dim=1).max()
 
     wnom_model.beta
     wnom_model.w
 
     wnom_model.ideal_points.shape
-    initial_ideal = wnom_model.ideal_points[torch.arange(0, num_legs), :, 0]
+    initial_ideal = wnom_model.ideal_points[torch.arange(0, n_legs), :, 0]
     initial_ideal.shape
-    last_session_ideal = initial_ideal + wnom_model.ideal_points[torch.arange(0, num_legs), :, 1] * sessions_served.unsqueeze(-1) + wnom_model.ideal_points[torch.arange(0, num_legs), :, 2] * (sessions_served ** 2).unsqueeze(-1)
+    last_session_ideal = initial_ideal + wnom_model.ideal_points[torch.arange(0, n_legs), :, 1] * sessions_served.unsqueeze(-1) + wnom_model.ideal_points[torch.arange(0, n_legs), :, 2] * (sessions_served ** 2).unsqueeze(-1)
 
-    ideal_points = wnom_model.ideal_points[torch.arange(0, num_legs), :, :]
+    ideal_points = wnom_model.ideal_points[torch.arange(0, n_legs), :, :]
     asdf = torch.clone(initial_ideal)
     for kk in range(1, ideal_points.shape[2]):
         asdf += ideal_points[:, : , kk] * sessions_served.pow(kk).unsqueeze(-1)

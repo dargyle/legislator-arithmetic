@@ -149,7 +149,7 @@ for i in range(1, top_dim):
     # SVG(model_to_dot(model).create(prog='dot', format='svg'))
 
     # opt = tfp.optimizer.VariationalSGD(batch_size=1,
-    #                                    total_num_examples=vote_data["N"],
+    #                                    total_n_examples=vote_data["N"],
     #                                    # use_single_learning_rate=True,
     #                                    burnin=100,
     #                                    max_learning_rate=3.0,
@@ -157,7 +157,7 @@ for i in range(1, top_dim):
     #                                    preconditioner_decay_rate=0.95,
     #                                    )
     # opt = tf.keras.optimizers.Nadam()
-    opt = tfp.optimizer.VariationalSGD(batch_size=1, total_num_examples=vote_data["N"])
+    opt = tfp.optimizer.VariationalSGD(batch_size=1, total_n_examples=vote_data["N"])
     model.compile(loss='binary_crossentropy', optimizer=opt, metrics=['accuracy'])
 
     callbacks = [
