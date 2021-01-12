@@ -3,6 +3,9 @@ import pandas as pd
 
 from constants import DATA_PATH
 
+import logging
+logger = logging.getLogger(__name__)
+
 
 def drop_unanimous(vote_df,
                    min_vote_count=20,
@@ -31,7 +34,7 @@ def drop_unanimous(vote_df,
     # Need to ensure that legislators still meet minimum vote count even after unanimous bills
     # are dropped (and vice versa)
     while voter_condition or unanimity_condition:
-        print("Testing legislator vote counts")
+        logger.info("Testing legislator vote counts")
         # Count the number of votes cast by each legislator id
         leg_vote_counts = vote_df["leg_id"].value_counts()
         # Determine which meet the requirement
@@ -41,11 +44,11 @@ def drop_unanimous(vote_df,
         # If there is a difference, keep only those that met the condition
         if n_leg_diff > 0:
             vote_df = vote_df.merge(valid_leg_ids, on="leg_id", how="inner")
-        print("Dropped {} legislators with fewer than {} votes".format(n_leg_diff, min_vote_count))
+        logger.info("Dropped {} legislators with fewer than {} votes".format(n_leg_diff, min_vote_count))
         # Update voting condition
         voter_condition = (n_leg_diff > 0)
 
-        print("Testing unanimity condition")
+        logger.info("Testing unanimity condition")
         # Get the percentage voting yea on a given bill
         vote_percentages = vote_df.groupby("vote_id")[["vote"]].mean()
         # Identify votes where the yea percentage is within the unanimity_percentage (for either side)
@@ -56,7 +59,7 @@ def drop_unanimous(vote_df,
         # Keep only nonunanimous votes by merging
         if n_vote_diff > 0:
             vote_df = vote_df.merge(nonunanimous_vote_ids, on="vote_id", how="inner")
-        print("Dropped {} votes with fewer than {}% voting in the minority".format(n_vote_diff, unanimity_percentage * 100))
+        logger.info("Dropped {} votes with fewer than {}% voting in the minority".format(n_vote_diff, unanimity_percentage * 100))
         # Update condition
         unanimity_condition = (n_vote_diff > 0)
 
@@ -82,7 +85,7 @@ def process_data(vote_df, congress_cutoff=0, k_dim=1, k_time=0,
         vote_data (dict): a dictionary containing all the data necessary to fit
             the model
     '''
-    print("Limit the sample")
+    logger.info("Limit the sample")
     if congress_cutoff:
         vote_df = vote_df[vote_df["congress"] >= congress_cutoff].copy()
 
@@ -105,7 +108,7 @@ def process_data(vote_df, congress_cutoff=0, k_dim=1, k_time=0,
 
     N = len(vote_df)
     key_index = round(validation_split * N)
-    print(f"key_index: {key_index}")
+    logger.debug(f"key_index: {key_index}")
 
     # Keep only votes that are valid in the dataset
     train_data = vote_df.iloc[:(N - key_index), :].copy()
@@ -242,6 +245,5 @@ def prep_r_rollcall(vote_data):
 
     roll_call = train_vote_df.set_index(["leg_id", "vote_id"])["vote"].map({1: 1, 0: 6}).unstack()
     roll_call = roll_call.fillna(9).astype(int)
-
 
     return roll_call

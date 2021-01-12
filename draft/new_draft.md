@@ -7,6 +7,7 @@ Todos:
 - wnom and bayes: dropout regularization
 - wnom and bayes: save and load models
 - wnom and bayes: orthogonality regularization
+- wnom and bayes: initialization with multiple time periods
 
 Paper outline:
 
