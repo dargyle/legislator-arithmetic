@@ -332,3 +332,9 @@ if __name__ == '__main__':
         optimizer.zero_grad()
         loss.backward()
         optimizer.step()
+
+    pd.Series(losses).min()
+    pd.Series(losses).idxmin()
+
+    pd.Series(test_losses).min()
+    pd.Series(test_losses).idxmin()
