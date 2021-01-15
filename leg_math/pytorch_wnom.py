@@ -25,7 +25,7 @@ from sklearn.metrics import accuracy_score
 from tqdm import tqdm
 
 import logging
-logging.basicConfig(format='%(asctime)s - %(levelname)s - %(filename)s - %(funcName)s - %(message)s', level=logging.DEBUG)
+# logging.basicConfig(format='%(asctime)s - %(levelname)s - %(filename)s - %(funcName)s - %(message)s', level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 pyro.enable_validation(True)
@@ -109,7 +109,12 @@ class wnom_full(nn.Module):
         with torch.no_grad():
             norm = weight.norm(2, dim=1, keepdim=True)
             desired = torch.clamp(norm, max=1)
-            weight *= desired / norm
+            reduce_factor = desired / norm
+            validation_check = reduce_factor.isnan()
+            if validation_check.any():
+                logger.warn("NaN values in weight normalization!")
+                reduce_factor[validation_check] = 1.0
+            weight *= reduce_factor
 
     def reduced_max_norm_(self, weight, sessions_served=None):
         """
@@ -139,7 +144,12 @@ class wnom_full(nn.Module):
                 # Get the biger of the two norms
                 norm = torch.max(torch.cat([norm_initial, norm_final], axis=1), dim=1, keepdim=True)[0]
                 desired = torch.clamp(norm, max=1)
-                weight *= (desired / norm).unsqueeze(dim=-1)
+                reduce_factor = desired / norm
+                validation_check = reduce_factor.isnan()
+                if validation_check.any():
+                    logger.warn("NaN values in weight normalization!")
+                    reduce_factor[validation_check] = 1.0
+                weight *= reduce_factor.unsqueeze(dim=-1)
         else:
             # If no sessions served information is given, ensure that the point when t=1 is
             # is in the unit hypersphere
@@ -147,7 +157,12 @@ class wnom_full(nn.Module):
                 reduced_weight = weight.sum(dim=2)
                 norm = reduced_weight.norm(2, dim=1, keepdim=True)
                 desired = torch.clamp(norm, max=1)
-                weight *= (desired / norm).unsqueeze(dim=-1)
+                reduce_factor = desired / norm
+                validation_check = reduce_factor.isnan()
+                if validation_check.any():
+                    logger.warn("NaN values in weight normalization!")
+                    reduce_factor[validation_check] = 1.0
+                weight *= reduce_factor.unsqueeze(dim=-1)
 
     def forward(self, legs, votes, time_tensor=None, sessions_served=None):
         """

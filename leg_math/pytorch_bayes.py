@@ -24,7 +24,7 @@ from constants import DATA_PATH
 from sklearn.metrics import accuracy_score
 
 import logging
-logging.basicConfig(format='%(asctime)s - %(levelname)s - %(filename)s - %(funcName)s - %(message)s', level=logging.DEBUG)
+# logging.basicConfig(format='%(asctime)s - %(levelname)s - %(filename)s - %(funcName)s - %(message)s', level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 
