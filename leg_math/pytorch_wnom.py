@@ -231,8 +231,8 @@ if __name__ == '__main__':
     responses_test = torch.tensor(vote_data["y_test"].flatten(), dtype=torch.float, device=device)
 
     # Set some constants
-    n_legs = len(set(legs.numpy()))
-    n_votes = len(set(votes.numpy()))
+    n_legs = torch.unique(legs).shape[0]
+    n_votes = torch.unique(votes).shape[0]
 
     logger.info("Set up the pytorch model")
     wnom_model = wnom_full(n_legs, n_votes, k_dim, custom_init_values)
@@ -250,12 +250,10 @@ if __name__ == '__main__':
         loss = criterion(y_pred, responses)
 
         with torch.no_grad():
-            # accuracy = accuracy_score(responses, y_pred.numpy() >= 0.5)
             accuracy = ((y_pred > 0) == responses).sum().item() / len(responses)
 
             y_pred_test = wnom_model(legs_test, votes_test)
             loss_test = criterion(y_pred_test, responses_test)
-            # accuracy_test = accuracy_score(responses_test, y_pred_test.numpy() >= 0.5)
             accuracy_test = ((y_pred_test > 0) == responses_test).sum().item() / len(responses_test)
 
         # if t % 100 == 0:
@@ -308,8 +306,8 @@ if __name__ == '__main__':
     sessions_served = torch.tensor(vote_data["sessions_served"])
 
     # Set some constants
-    n_legs = len(set(legs.numpy()))
-    n_votes = len(set(votes.numpy()))
+    n_legs = torch.unique(legs).shape[0]
+    n_votes = torch.unique(votes).shape[0]
     # n_covar = covariates.shape[1]
 
     logger.info("Setup the pytorch model")
@@ -328,12 +326,10 @@ if __name__ == '__main__':
         loss = criterion(y_pred, responses)
 
         with torch.no_grad():
-            # accuracy = accuracy_score(responses, y_pred.numpy() >= 0.5)
             accuracy = ((y_pred > 0) == responses).sum().item() / len(responses)
 
             y_pred_test = wnom_model(legs_test, votes_test, time_tensor_test)
             loss_test = criterion(y_pred_test, responses_test)
-            # accuracy_test = accuracy_score(responses_test, y_pred_test.numpy() >= 0.5)
             accuracy_test = ((y_pred_test > 0) == responses_test).sum().item() / len(responses_test)
 
         # if t % 100 == 0:

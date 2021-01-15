@@ -85,14 +85,14 @@ for j in range(2000):
 
 # Get the parameters into pandas dataframes
 ideal_points = pd.concat(
-                [pd.DataFrame(pyro.param("AutoNormal.locs.theta").data.numpy(), columns=['loc_{}'.format(j + 1) for j in range(k_dim)]),
-                 pd.DataFrame(pyro.param("AutoNormal.scales.theta").data.numpy(), columns=['scale_{}'.format(j + 1) for j in range(k_dim)])
+                [pd.DataFrame(pyro.param("AutoNormal.locs.theta").cpu().data.numpy(), columns=['loc_{}'.format(j + 1) for j in range(k_dim)]),
+                 pd.DataFrame(pyro.param("AutoNormal.scales.theta").cpu().data.numpy(), columns=['scale_{}'.format(j + 1) for j in range(k_dim)])
                  ], axis=1)
 polarity = pd.concat(
-                [pd.DataFrame(pyro.param("AutoNormal.locs.beta").data.numpy(), columns=['loc_{}'.format(j + 1) for j in range(k_dim)]),
-                 pd.DataFrame(pyro.param("AutoNormal.scales.beta").data.numpy(), columns=['scale_{}'.format(j + 1) for j in range(k_dim)])
+                [pd.DataFrame(pyro.param("AutoNormal.locs.beta").cpu().data.numpy(), columns=['loc_{}'.format(j + 1) for j in range(k_dim)]),
+                 pd.DataFrame(pyro.param("AutoNormal.scales.beta").cpu().data.numpy(), columns=['scale_{}'.format(j + 1) for j in range(k_dim)])
                  ], axis=1)
-popularity = pd.DataFrame({"loc": pyro.param('AutoNormal.locs.alpha').data.numpy(), "scale": pyro.param('AutoNormal.scales.alpha').data.numpy()})
+popularity = pd.DataFrame({"loc": pyro.param('AutoNormal.locs.alpha').cpu().data.numpy(), "scale": pyro.param('AutoNormal.scales.alpha').cpu().data.numpy()})
 
 logger.info("Generate predictions for model evaluation")
 # The iterative process is necessary because we used an autoguide
@@ -117,7 +117,7 @@ for _ in range(1000):
 preds = torch.stack(preds_list)
 
 # Calculate log loss and accuracy scores, out of sample
-predictions = pd.Series(preds.mean(axis=0).numpy())
+predictions = pd.Series(preds.mean(axis=0).cpu().numpy())
 loss = torch.nn.BCELoss()
 test_loss = loss(preds.mean(axis=0), responses_test).item()
 logger.info("Test loss: {test_loss}")
@@ -155,21 +155,21 @@ preds_test = posterior_predictive(legs_test, votes_test, covariates=covariates_t
 loss = torch.nn.BCELoss()
 train_log_loss = loss(preds, responses).item()
 print("Train loss: {}".format(train_log_loss))
-train_accuracy = accuracy_score(responses, preds.numpy() >= 0.5)
+train_accuracy = accuracy_score(responses, preds.cpu().numpy() >= 0.5)
 print("Train accuracy: {}".format(train_accuracy))
 
 # Out of sample metrics
 test_log_loss = loss(preds_test, responses_test).item()
 print("Test loss: {}".format(test_log_loss))
-test_accuracy = accuracy_score(responses_test, preds_test.numpy() >= 0.5)
+test_accuracy = accuracy_score(responses_test, preds_test.cpu().numpy() >= 0.5)
 print("Test accuracy: {}".format(test_accuracy))
 
 ideal_points_mcmc = pd.concat([
-                        pd.DataFrame(samples["theta"].mean(axis=0).numpy(), columns=['loc_{}_mcmc'.format(j + 1) for j in range(k_dim)]),
-                        pd.DataFrame(samples["theta"].std(axis=0).numpy(), columns=['scale_{}_mcmc'.format(j + 1) for j in range(k_dim)]),
+                        pd.DataFrame(samples["theta"].mean(axis=0).cpu().numpy(), columns=['loc_{}_mcmc'.format(j + 1) for j in range(k_dim)]),
+                        pd.DataFrame(samples["theta"].std(axis=0).cpu().numpy(), columns=['scale_{}_mcmc'.format(j + 1) for j in range(k_dim)]),
                         ], axis=1)
 
-# sns.distplot(pd.DataFrame(samples["coef"].numpy()))
+# sns.distplot(pd.DataFrame(samples["coef"].cpu().numpy()))
 
 # Compare thre results of the two processes
 comp_ideal = pd.concat([ideal_points, ideal_points_mcmc], axis=1)
@@ -179,7 +179,7 @@ comp_ideal.corr()
 # comp_ideal.plot(kind='scatter', x="scale_1_mcmc", y="scale_1")
 
 import seaborn as sns
-sns.distplot(pd.Series(samples["theta"][:, 0, 0].numpy()), bins=25)
+sns.distplot(pd.Series(samples["theta"][:, 0, 0].cpu().numpy()), bins=25)
 
 temp_d = dist.Normal(ideal_points.loc[0, "loc_1"], ideal_points.loc[0, "scale_1"])
 sns.distplot(pd.Series([temp_d().item() for k in range(100)]), bins=25)

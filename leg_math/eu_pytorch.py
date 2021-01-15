@@ -68,7 +68,7 @@ vote_df = pd.merge(vote_df,
                    how='left')
 
 all_metrics = []
-for k_dim in range(1, 4):
+for k_dim in range(1, 5):
     for k_time in range(0, 2):
         logger.info(f"Processing for k_dim={k_dim} and k_time={k_time}")
         data_params = dict(
@@ -87,14 +87,18 @@ for k_dim in range(1, 4):
         legs = torch.tensor(x_train[0].flatten(), dtype=torch.long, device=device)
         votes = torch.tensor(x_train[1].flatten(), dtype=torch.long, device=device)
         responses = torch.tensor(vote_data["y_train"].flatten(), dtype=torch.float, device=device)
+        if k_time > 0:
+            time_tensor = torch.tensor(np.stack(vote_data["time_passed_train"]).transpose(), dtype=torch.float, device=device)
 
         legs_test = torch.tensor(x_test[0].flatten(), dtype=torch.long, device=device)
         votes_test = torch.tensor(x_test[1].flatten(), dtype=torch.long, device=device)
         responses_test = torch.tensor(vote_data["y_test"].flatten(), dtype=torch.float, device=device)
+        if k_time > 0:
+            time_passed_test = torch.tensor(np.stack(vote_data["time_passed_test"]).transpose(), dtype=torch.float, device=device)
 
         # Set some constants
-        n_legs = len(set(legs.numpy()))
-        n_votes = len(set(votes.numpy()))
+        n_legs = torch.unique(legs).shape[0]
+        n_votes = torch.unique(votes).shape[0]
 
         # Old reliable way to fit the model, works fine but missing some features
         # logger.info("Set up the pytorch model")
@@ -117,12 +121,10 @@ for k_dim in range(1, 4):
         #     loss = criterion(y_pred, responses)
         #
         #     with torch.no_grad():
-        #         # accuracy = accuracy_score(responses, y_pred.numpy() >= 0.5)
         #         accuracy = ((y_pred > 0) == responses).sum().item() / len(responses)
         #
         #         y_pred_test = wnom_model(legs_test, votes_test)
         #         loss_test = criterion(y_pred_test, responses_test)
-        #         # accuracy_test = accuracy_score(responses_test, y_pred_test.numpy() >= 0.5)
         #         accuracy_test = ((y_pred_test > 0) == responses_test).sum().item() / len(responses_test)
         #
         #         if keep_best:
@@ -156,8 +158,12 @@ for k_dim in range(1, 4):
 
         # Instead, just make an iterable of a list of the data
         # In theory, this could be a list of separate batches, but in our case using the whole dataset is fine
-        train_loader = [[legs, votes, responses]]
-        val_loader = [[legs_test, votes_test, responses_test]]
+        if k_time > 0:
+            train_loader = [[legs, votes, responses]]
+            val_loader = [[legs_test, votes_test, responses_test]]
+        else:
+            train_loader = [[legs, votes, responses]]
+            val_loader = [[legs_test, votes_test, responses_test]]
 
 
         def process_function(engine, batch):
@@ -250,6 +256,7 @@ for k_dim in range(1, 4):
 
         k = 0
         for param in model.parameters():
+            print(param.shape)
             k += np.array(param.shape).prod()
 
         metrics = {**train_metrics, **test_metrics}
@@ -262,9 +269,9 @@ for k_dim in range(1, 4):
         all_metrics += [final_metrics]
 
 metrics_df = pd.DataFrame(all_metrics)
-metrics_df.to_pickle(EU_PATH + f'checkpoints/all_metrics_wnom_full_{k_dim}_{k_time}.pkl')
+metrics_df.to_pickle(EU_PATH + f'checkpoints/all_metrics_wnom_full.pkl')
 
-
+metrics_df = pd.read_pickle(EU_PATH + f'checkpoints/all_metrics_wnom_full.pkl')
 
 
 # pd.Series(losses).plot()
