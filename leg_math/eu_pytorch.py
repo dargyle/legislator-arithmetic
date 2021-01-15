@@ -68,6 +68,8 @@ vote_df = pd.merge(vote_df,
                    how='left')
 
 all_metrics = []
+k_dim = 1
+k_time = 1
 for k_dim in range(1, 5):
     for k_time in range(0, 2):
         logger.info(f"Processing for k_dim={k_dim} and k_time={k_time}")
@@ -89,6 +91,7 @@ for k_dim in range(1, 5):
         responses = torch.tensor(vote_data["y_train"].flatten(), dtype=torch.float, device=device)
         if k_time > 0:
             time_tensor = torch.tensor(np.stack(vote_data["time_passed_train"]).transpose(), dtype=torch.float, device=device)
+            sessions_served = torch.tensor(vote_data["sessions_served"], device=device)
 
         legs_test = torch.tensor(x_test[0].flatten(), dtype=torch.long, device=device)
         votes_test = torch.tensor(x_test[1].flatten(), dtype=torch.long, device=device)
@@ -146,7 +149,10 @@ for k_dim in range(1, 5):
 
 
         logger.info("Set up a pytorch model with ignite")
-        model = wnom_full(n_legs, n_votes, k_dim, custom_init_values)
+        if k_time > 0:
+            model = wnom_full(n_legs, n_votes, k_dim, custom_init_values, k_time=k_time)
+        else:
+            model = wnom_full(n_legs, n_votes, k_dim, custom_init_values)
         criterion = torch.nn.BCEWithLogitsLoss()
         # optimizer = torch.optim.AdamW(wnom_model.parameters(), amsgrad=True)
         # Default learning rate is too conservative, this works well for this dataset
@@ -159,8 +165,8 @@ for k_dim in range(1, 5):
         # Instead, just make an iterable of a list of the data
         # In theory, this could be a list of separate batches, but in our case using the whole dataset is fine
         if k_time > 0:
-            train_loader = [[legs, votes, responses]]
-            val_loader = [[legs_test, votes_test, responses_test]]
+            train_loader = [[legs, votes, responses, time_tensor, sessions_served]]
+            val_loader = [[legs_test, votes_test, responses_test, time_tensor, sessions_served]]
         else:
             train_loader = [[legs, votes, responses]]
             val_loader = [[legs_test, votes_test, responses_test]]
@@ -169,8 +175,12 @@ for k_dim in range(1, 5):
         def process_function(engine, batch):
             model.train()
             optimizer.zero_grad()
-            x1, x2, y = batch
-            y_pred = model(x1, x2)
+            if model.k_time > 0:
+                x1, x2, y, tt, ss = batch
+                y_pred = model(x1, x2, tt, ss)
+            else:
+                x1, x2, y = batch
+                y_pred = model(x1, x2)
             loss = criterion(y_pred, y)
             loss.backward()
             optimizer.step()
@@ -180,8 +190,12 @@ for k_dim in range(1, 5):
         def eval_function(engine, batch):
             model.eval()
             with torch.no_grad():
-                x1, x2, y = batch
-                y_pred = model(x1, x2)
+                if model.k_time > 0:
+                    x1, x2, y, tt, ss = batch
+                    y_pred = model(x1, x2, tt, ss)
+                else:
+                    x1, x2, y = batch
+                    y_pred = model(x1, x2)
                 return y_pred, y
 
 
@@ -217,7 +231,7 @@ for k_dim in range(1, 5):
         handler = EarlyStopping(patience=5, score_function=score_function, trainer=trainer)
         validation_evaluator.add_event_handler(Events.COMPLETED, handler)
 
-        checkpointer = ModelCheckpoint(EU_PATH + 'checkpoints/', f'wnom_full_{k_dim}_{k_time}', n_saved=5, create_dir=True, require_empty=False)
+        checkpointer = ModelCheckpoint(EU_PATH + "checkpoints", f'wnom_full_{k_dim}_{k_time}', n_saved=5, create_dir=True, require_empty=False)
         trainer.add_event_handler(Events.EPOCH_COMPLETED, checkpointer, {'wnom_full': model})
 
         @trainer.on(Events.EPOCH_COMPLETED)
@@ -256,7 +270,7 @@ for k_dim in range(1, 5):
 
         k = 0
         for param in model.parameters():
-            print(param.shape)
+            # print(param.shape)
             k += np.array(param.shape).prod()
 
         metrics = {**train_metrics, **test_metrics}

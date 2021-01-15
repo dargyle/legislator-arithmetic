@@ -142,14 +142,14 @@ nuts_kernel = NUTS(bayes_irt_full, adapt_step_size=True, jit_compile=True, ignor
 # For real inference should probably increase the number of samples, but this is slow and enough to test
 hmc_posterior = MCMC(nuts_kernel, num_samples=250, warmup_steps=100)
 # Run the model
-hmc_posterior.run(legs, votes, responses, covariates=covariates, k_dim=k_dim)
+hmc_posterior.run(legs, votes, responses, covariates=covariates, k_dim=k_dim, device=device)
 
 # Gthe MCMC results into a dataframe
 samples = hmc_posterior.get_samples()
 # Generate model predictions based on the posterior samples
 posterior_predictive = pyro.infer.predictive.Predictive(bayes_irt_full, samples)
-preds = posterior_predictive(legs, votes, covariates=covariates)["obs"].mean(axis=0).flatten(0)
-preds_test = posterior_predictive(legs_test, votes_test, covariates=covariates_test)["obs"].mean(axis=0).flatten(0)
+preds = posterior_predictive(legs, votes, covariates=covariates, device=device)["obs"].mean(axis=0).flatten(0)
+preds_test = posterior_predictive(legs_test, votes_test, covariates=covariates_test, device=device)["obs"].mean(axis=0).flatten(0)
 
 # train sample metrics
 loss = torch.nn.BCELoss()

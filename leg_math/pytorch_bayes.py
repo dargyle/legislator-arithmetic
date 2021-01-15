@@ -242,7 +242,7 @@ if __name__ == '__main__':
     # For real inference should probably increase the number of samples, but this is slow and enough to test
     hmc_posterior = MCMC(nuts_kernel, num_samples=250, warmup_steps=100)
     # Run the model
-    hmc_posterior.run(legs, votes, responses, covariates, k_dim=k_dim)
+    hmc_posterior.run(legs, votes, responses, covariates, k_dim=k_dim, device=device)
 
     # Summarize the results
     hmc_posterior.summary()
@@ -314,7 +314,7 @@ if __name__ == '__main__':
     # For real inference should probably increase the number of samples, but this is slow and enough to test
     hmc_posterior = MCMC(nuts_kernel, num_samples=250, warmup_steps=100)
     # Run the model
-    hmc_posterior.run(legs, votes, y=responses, covariates=covariates, time_passed=time_passed, k_dim=k_dim)
+    hmc_posterior.run(legs, votes, y=responses, covariates=covariates, time_passed=time_passed, k_dim=k_dim, device=device)
 
     # Summarize the results
     hmc_posterior.summary()

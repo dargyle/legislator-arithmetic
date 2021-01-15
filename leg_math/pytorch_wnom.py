@@ -84,12 +84,15 @@ class wnom_full(nn.Module):
     """
     A class for implementing dwnominate, dynamic ideal points
     """
-    def __init__(self, n_legs, n_votes, k_dim, pretrained=None, k_time=None):
+    def __init__(self, n_legs, n_votes, k_dim, pretrained=None, k_time=0):
         """
         Instantiate using the embeddings of legislator and bill info
         """
         super(wnom_full, self).__init__()
-        if k_time is not None:
+        self.k_dim = k_dim
+        self.k_time = k_time
+
+        if k_time > 0:
             self.ideal_points = nn.Parameter((torch.rand(n_legs, k_dim, k_time + 1) - 0.5))
         else:
             if pretrained is not None:
@@ -303,7 +306,7 @@ if __name__ == '__main__':
     # time_tensor_test = torch.cat([torch.ones(time_passed_test.shape[0], device=device).unsqueeze(-1), time_passed_test], axis=1)
     time_tensor_test = time_passed_test
 
-    sessions_served = torch.tensor(vote_data["sessions_served"])
+    sessions_served = torch.tensor(vote_data["sessions_served"], device=device)
 
     # Set some constants
     n_legs = torch.unique(legs).shape[0]
@@ -349,3 +352,122 @@ if __name__ == '__main__':
 
     pd.Series(test_losses).min()
     pd.Series(test_losses).idxmin()
+
+
+    from ignite.engine import Engine, Events
+    from ignite.metrics import Accuracy, Loss, RunningAverage
+    from ignite.handlers import ModelCheckpoint, EarlyStopping
+    from ignite.contrib.handlers import ProgressBar
+
+    from qhoptim.pyt import QHM, QHAdam
+
+    logger.info("Set up a pytorch model with ignite")
+    if k_time > 0:
+        model = wnom_full(n_legs, n_votes, k_dim, custom_init_values, k_time=k_time)
+    else:
+        model = wnom_full(n_legs, n_votes, k_dim, custom_init_values)
+    criterion = torch.nn.BCEWithLogitsLoss()
+    # optimizer = torch.optim.AdamW(wnom_model.parameters(), amsgrad=True)
+    # Default learning rate is too conservative, this works well for this dataset
+    optimizer = QHAdam(model.parameters(), lr=5e-2)
+
+    # Data loader was super slow, but probably the "right" way to do this
+    # train_loader = torch.utils.data.DataLoader(torch.utils.data.TensorDataset(legs, votes, responses), batch_size=100000, shuffle=True)
+    # val_loader = torch.utils.data.DataLoader(torch.utils.data.TensorDataset(legs_test, votes_test, responses_test), batch_size=100000)
+
+    # Instead, just make an iterable of a list of the data
+    # In theory, this could be a list of separate batches, but in our case using the whole dataset is fine
+    if k_time > 0:
+        train_loader = [[legs, votes, responses, time_tensor, sessions_served]]
+        val_loader = [[legs_test, votes_test, responses_test, time_tensor, sessions_served]]
+    else:
+        train_loader = [[legs, votes, responses]]
+        val_loader = [[legs_test, votes_test, responses_test]]
+
+
+    def process_function(engine, batch):
+        model.train()
+        optimizer.zero_grad()
+        if model.k_time > 0:
+            x1, x2, y, tt, ss = batch
+            y_pred = model(x1, x2, tt, ss)
+        else:
+            x1, x2, y = batch
+            y_pred = model(x1, x2)
+        loss = criterion(y_pred, y)
+        loss.backward()
+        optimizer.step()
+        return y_pred, y
+
+
+    def eval_function(engine, batch):
+        model.eval()
+        with torch.no_grad():
+            if model.k_time > 0:
+                x1, x2, y, tt, ss = batch
+                y_pred = model(x1, x2, tt, ss)
+            else:
+                x1, x2, y = batch
+                y_pred = model(x1, x2)
+            return y_pred, y
+
+
+    trainer = Engine(process_function)
+    train_evaluator = Engine(eval_function)
+    validation_evaluator = Engine(eval_function)
+
+    # RunningAverage(output_transform=lambda x: x).attach(trainer, 'loss')
+
+    def thresholded_output_transform(output):
+        y_pred, y = output
+        y_pred = torch.round(torch.sigmoid(y_pred))
+        return y_pred, y
+
+
+    Accuracy(output_transform=thresholded_output_transform).attach(train_evaluator, 'accuracy')
+    Loss(criterion).attach(train_evaluator, 'bce')
+
+    Accuracy(output_transform=thresholded_output_transform).attach(validation_evaluator, 'accuracy')
+    Loss(criterion).attach(validation_evaluator, 'bce')
+
+    pbar = ProgressBar(persist=True)
+    pbar.attach(trainer)
+    # pbar.attach(trainer, ['loss'])
+
+
+    def score_function(engine):
+        # logger.warning(engine.state.metrics)
+        val_loss = engine.state.metrics['bce']
+        return -val_loss
+
+
+    handler = EarlyStopping(patience=5, score_function=score_function, trainer=trainer)
+    validation_evaluator.add_event_handler(Events.COMPLETED, handler)
+
+    checkpointer = ModelCheckpoint('.', f'wnom_full_{k_dim}_{k_time}', n_saved=5, create_dir=True, require_empty=False)
+    trainer.add_event_handler(Events.EPOCH_COMPLETED, checkpointer, {'wnom_full': model})
+
+    @trainer.on(Events.EPOCH_COMPLETED)
+    def log_training_results(engine):
+        train_evaluator.run(train_loader)
+        metrics = train_evaluator.state.metrics
+        avg_accuracy = metrics['accuracy']
+        avg_bce = metrics['bce']
+        pbar.log_message(
+            "Training Results - Epoch: {}  Avg accuracy: {:.2f} Avg loss: {:.4f}"
+            .format(engine.state.epoch, avg_accuracy, avg_bce))
+
+
+    @trainer.on(Events.EPOCH_COMPLETED)
+    def log_validation_results(engine):
+        validation_evaluator.run(val_loader)
+        metrics = validation_evaluator.state.metrics
+        avg_accuracy = metrics['accuracy']
+        avg_bce = metrics['bce']
+        pbar.log_message(
+            "Validation Results - Epoch: {}  Avg accuracy: {:.2f} Avg loss: {:.4f}"
+            .format(engine.state.epoch, avg_accuracy, avg_bce))
+        pbar.n = pbar.last_print_n = 0
+
+
+    trainer.run(train_loader, max_epochs=1000)
