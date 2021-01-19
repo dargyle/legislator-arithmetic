@@ -68,8 +68,8 @@ vote_df = pd.merge(vote_df,
                    how='left')
 
 all_metrics = []
-k_dim = 1
-k_time = 1
+# k_dim = 1
+# k_time = 1
 for k_dim in range(1, 5):
     for k_time in range(0, 2):
         logger.info(f"Processing for k_dim={k_dim} and k_time={k_time}")
@@ -274,9 +274,11 @@ for k_dim in range(1, 5):
             k += np.array(param.shape).prod()
 
         metrics = {**train_metrics, **test_metrics}
+        metrics["n"] = responses.shape[0]
         metrics["k"] = k
         metrics["log_like"] = log_like.item()
         metrics["aic"] = ((2 * k) - (2 * log_like)).item()
+        metrics["bic"] = k * np.log(metrics["n"]) - (2 * log_like.item())
 
         final_metrics = {**data_params, **metrics}
         pd.Series(final_metrics).to_pickle(EU_PATH + f'checkpoints/metrics_wnom_full_{k_dim}_{k_time}.pkl')
@@ -286,7 +288,10 @@ metrics_df = pd.DataFrame(all_metrics)
 metrics_df.to_pickle(EU_PATH + f'checkpoints/all_metrics_wnom_full.pkl')
 
 metrics_df = pd.read_pickle(EU_PATH + f'checkpoints/all_metrics_wnom_full.pkl')
-
+# metrics_df["n"] = responses.shape[0]
+# metrics_df["bic"] = metrics_df["k"] * np.log(metrics_df["n"]) - (2 * metrics_df["log_like"])
+# np.exp((metrics_df["aic"].min() - metrics_df["aic"]) / 2)
+# (metrics_df["bic"].min() - metrics_df["bic"])
 
 # pd.Series(losses).plot()
 # pd.Series(test_losses).plot()

@@ -311,3 +311,27 @@ most_recent_parties["init_value"] = most_recent_parties["init_value"].fillna(0)
 # most_recent_parties["init_value"] = most_recent_parties["init_value"].astype(int)
 
 most_recent_parties.to_pickle(EU_PATH + "most_recent_parties.pkl")
+
+dataset_list = ["eu_vote_metadata",
+                "eu_votes",
+                "leg_data",
+                "most_recent_parties",
+                ]
+for dataset in dataset_list:
+    print(dataset)
+    df = pd.read_pickle(EU_PATH + dataset + ".pkl")
+
+    for col in df.columns:
+        col = df.columns[0]
+        weird = (df[[col]].applymap(type) != df[[col]].iloc[0].apply(type)).any(axis=1)
+        if len(df[weird]) > 0:
+            print(col)
+            df[col] = df[col].astype(str)
+
+        if df[col].dtype == list:
+            df[col] = df[col].astype(str)
+
+    if dataset == 'most_recent_parties':
+        df = df.reset_index(drop=True)
+
+    df.to_feather(EU_PATH + dataset + ".feather")
