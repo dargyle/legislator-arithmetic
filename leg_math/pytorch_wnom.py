@@ -133,12 +133,12 @@ class wnom_full(nn.Module):
         """
         if sessions_served is not None:
             # This ensures that both the first and last ideal points are in the unit hypersphere
-            with torch.no_grad():
+            with torch.no_grad():           
                 # Check the initial ideal point
                 initial_ideal = weight[:, :, 0]
                 # Initiate the final ideal point
                 final_ideal = torch.clone(initial_ideal)
-                # Add in the time trends to obtain the actual final point
+                # Add in the time trends to obtain the actual final point            
                 for ii in range(1, weight.shape[2]):
                     final_ideal += weight[:, :, ii] * (sessions_served.unsqueeze(-1) ** ii)
                 # Clip the values by the first or last, whichever is bigger
@@ -186,7 +186,7 @@ class wnom_full(nn.Module):
         else:
             self.max_norm_(self.ideal_points)
             ideal_points_use = self.ideal_points[legs]
-
+           
         # Calculate distances from ideal points
         distances1 = torch.sum(torch.square(ideal_points_use - self.yes_points[votes]) * torch.square(self.w), axis=1)
         distances2 = torch.sum(torch.square(ideal_points_use - self.no_points[votes]) * torch.square(self.w), axis=1)
@@ -200,7 +200,7 @@ class wnom_full(nn.Module):
 if __name__ == '__main__':
     logger.info("Running some basic model tests on synthetic data")
     # Set up environment
-    gpu = False
+    gpu = True
     if gpu:
         device = torch.device('cuda')
     else:
@@ -238,7 +238,7 @@ if __name__ == '__main__':
     n_votes = torch.unique(votes).shape[0]
 
     logger.info("Set up the pytorch model")
-    wnom_model = wnom_full(n_legs, n_votes, k_dim, custom_init_values)
+    wnom_model = wnom_full(n_legs, n_votes, k_dim, custom_init_values).to(device)
 
     criterion = nn.BCEWithLogitsLoss()
     optimizer = torch.optim.AdamW(wnom_model.parameters(), amsgrad=True)
@@ -314,7 +314,7 @@ if __name__ == '__main__':
     # n_covar = covariates.shape[1]
 
     logger.info("Setup the pytorch model")
-    wnom_model = wnom_full(n_legs, n_votes, k_dim, k_time=k_time)
+    wnom_model = wnom_full(n_legs, n_votes, k_dim, k_time=k_time).to(device)
 
     criterion = nn.BCEWithLogitsLoss()
     optimizer = torch.optim.AdamW(wnom_model.parameters(), amsgrad=True)
@@ -325,7 +325,7 @@ if __name__ == '__main__':
     test_losses = []
     test_accuracies = []
     for t in tqdm(range(5000)):
-        y_pred = wnom_model(legs, votes, time_tensor, sessions_served)
+        y_pred = wnom_model(legs, votes, time_tensor, sessions_served).to(device)
         loss = criterion(y_pred, responses)
 
         with torch.no_grad():
@@ -363,9 +363,9 @@ if __name__ == '__main__':
 
     logger.info("Set up a pytorch model with ignite")
     if k_time > 0:
-        model = wnom_full(n_legs, n_votes, k_dim, custom_init_values, k_time=k_time)
+        model = wnom_full(n_legs, n_votes, k_dim, custom_init_values, k_time=k_time).to(device)
     else:
-        model = wnom_full(n_legs, n_votes, k_dim, custom_init_values)
+        model = wnom_full(n_legs, n_votes, k_dim, custom_init_values).to(device)
     criterion = torch.nn.BCEWithLogitsLoss()
     # optimizer = torch.optim.AdamW(wnom_model.parameters(), amsgrad=True)
     # Default learning rate is too conservative, this works well for this dataset

@@ -29,7 +29,7 @@ logger = logging.getLogger(__name__)
 pyro.enable_validation(True)
 
 # Set up environment
-gpu = False
+gpu = True
 
 if gpu:
     device = torch.device('cuda')
@@ -106,7 +106,7 @@ for k_dim in range(1, 5):
         # Old reliable way to fit the model, works fine but missing some features
         # logger.info("Set up the pytorch model")
         #
-        # wnom_model = wnom_full(n_legs, n_votes, k_dim, custom_init_values)
+        # wnom_model = wnom_full(n_legs, n_votes, k_dim, custom_init_values).to(device)
         #
         # criterion = torch.nn.BCEWithLogitsLoss()
         # # optimizer = torch.optim.AdamW(wnom_model.parameters(), amsgrad=True)
@@ -150,9 +150,9 @@ for k_dim in range(1, 5):
 
         logger.info("Set up a pytorch model with ignite")
         if k_time > 0:
-            model = wnom_full(n_legs, n_votes, k_dim, custom_init_values, k_time=k_time)
+            model = wnom_full(n_legs, n_votes, k_dim, custom_init_values, k_time=k_time).to(device)
         else:
-            model = wnom_full(n_legs, n_votes, k_dim, custom_init_values)
+            model = wnom_full(n_legs, n_votes, k_dim, custom_init_values).to(device)
         criterion = torch.nn.BCEWithLogitsLoss()
         # optimizer = torch.optim.AdamW(wnom_model.parameters(), amsgrad=True)
         # Default learning rate is too conservative, this works well for this dataset
