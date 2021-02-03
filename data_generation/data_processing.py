@@ -90,14 +90,14 @@ def process_data(vote_df, congress_cutoff=0, k_dim=1, k_time=0,
         vote_df = vote_df[vote_df["congress"] >= congress_cutoff].copy()
 
     if k_time > 0:
-        first_session = vote_df.groupby("leg_id")[["congress"]].agg(["min", "max"])
-        first_session.columns = ["first_session", "last_session"]
-        first_session["sessions_served"] = first_session["last_session"] - first_session["first_session"]
-        # first_session["first_session"].value_counts()
-        vote_df = pd.merge(vote_df, first_session, left_on="leg_id", right_index=True)
-        vote_df["time_passed"] = vote_df["congress"] - vote_df["first_session"]
+        first_event = vote_df.groupby("leg_id")[["time_vote"]].agg(["min", "max"])
+        first_event.columns = ["first_event", "last_event"]
+        first_event["time_present"] = first_event["last_event"] - first_event["first_event"]
+        # first_event["first_event"].value_counts()
+        vote_df = pd.merge(vote_df, first_event, left_on="leg_id", right_index=True)
+        vote_df["time_passed"] = vote_df["time_vote"] - vote_df["first_event"]
     else:
-        first_session = pd.DataFrame(columns=["sessions_served"], index=vote_df["leg_id"].unique())
+        first_event = pd.DataFrame(columns=["time_present"], index=vote_df["leg_id"].unique())
 
     # Shuffle the order of the vote data
     # THIS IS IMPORTANT, otherwise will_select just most recent bills
@@ -161,7 +161,7 @@ def process_data(vote_df, congress_cutoff=0, k_dim=1, k_time=0,
                  'covariates_test': test_data[covariates_list].values,
                  'vote_weight_train': train_data["vote_weight"].values,
                  'vote_weight_test': test_data["vote_weight"].values,
-                 'sessions_served': first_session.loc[leg_crosswalk_rev.keys(), "sessions_served"].values,
+                 'time_present': first_event.loc[leg_crosswalk_rev.keys(), "time_present"].values,
                  }
 
     # Export a pscl rollcall type object of the training data

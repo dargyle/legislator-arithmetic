@@ -18,8 +18,9 @@ if not os.path.exists(SYNTHETIC_PATH):
 
 def generate_nominate_votes(n_leg=100,
                             n_votes=2000,
-                            k_dim=3,
-                            w=np.array([1.0, 0.5, 0.5]),
+                            k_dim=2,
+                            k_time=0,
+                            w=np.array([1.0, 0.5]),
                             beta=15.0,
                             beta_covar=0.0,
                             cdf_type="norm",
@@ -73,9 +74,17 @@ def generate_nominate_votes(n_leg=100,
     if k_dim > 1:
         for i in range(2, k_dim + 1):
             ideal_points[f"coord{i}D"] = ideal_points[f"coord{i}D"] * np.random.choice([-1, 1], size=(n_leg, ))
+    if k_time > 0:
+        for j in range(1, k_time + 1):
+            for i in range(1, k_dim + 1):
+                ideal_points[f"coord{i}D_t{j}"] = (np.random.uniform(size=(n_leg, )) - 0.5) / (2 * n_votes)
 
     # Renorm samples to have max norm of 1
-    max_norm = np.sqrt((ideal_points.filter(regex="coord") ** 2).sum(axis=1)).max()
+    max_norm = np.sqrt((ideal_points.filter(regex=r"coord\dD$") ** 2).sum(axis=1)).max()
+    if k_time > 0:
+        final_point = ideal_points.filter(regex=r"coord\dD$").values + (n_votes * ideal_points.filter(regex=r"coord\dD_t\d")).values
+        final_max_norm = np.sqrt(final_point ** 2).sum(axis=1).max()
+        max_norm = max(max_norm, final_max_norm)
     col_selector = ideal_points.columns.str.contains("coord")
     ideal_points.loc[:, col_selector] = ideal_points.loc[:, col_selector] / max_norm
 
@@ -95,6 +104,19 @@ def generate_nominate_votes(n_leg=100,
     votes = pd.merge(votes, ideal_points, left_on="leg_id", right_index=True)
     votes = pd.merge(votes, yes_points, left_on="vote_id", right_index=True)
     votes = pd.merge(votes, no_points, left_on="vote_id", right_index=True)
+
+    # Generate some additional metadata
+    votes["party_in_power"] = 100
+    votes["congress"] = 114
+    bill_numbers = votes["vote_id"].str.split("_").str.get(1).astype(int)
+    votes.loc[bill_numbers > int(n_votes / 2), "party_in_power"] = 200
+    votes.loc[bill_numbers > int(n_votes / 2), "congress"] = 115
+    votes["time_vote"] = pd.to_numeric(votes["vote_id"].str.split("_").str[1])
+
+    if k_time > 0:
+        for j in range(1, k_time + 1):
+            for i in range(1, k_dim + 1):
+                votes[f"coord{i}D"] += votes[f"coord{i}D_t{j}"] * (votes["time_vote"] ** j)
 
     # Find squared differences in each dimension
     for i in range(1, k_dim + 1):
@@ -117,11 +139,6 @@ def generate_nominate_votes(n_leg=100,
     error = np.random.normal(0, np.sqrt(1 / beta), size=len(votes))
 
     # Generate a covariate for being a member of the party in power
-    votes["party_in_power"] = 100
-    votes["congress"] = 114
-    bill_numbers = votes["vote_id"].str.split("_").str.get(1).astype(int)
-    votes.loc[bill_numbers > int(n_votes / 2), "party_in_power"] = 200
-    votes.loc[bill_numbers > int(n_votes / 2), "congress"] = 115
     if beta_covar != 0.0:
         votes["in_majority"] = 1 * (votes["partyCode"] == votes["party_in_power"])
     else:
@@ -169,3 +186,5 @@ if __name__ == '__main__':
     roll_call.to_csv(SYNTHETIC_PATH + "/test_votes.csv")
     leg_data.to_csv(SYNTHETIC_PATH + "/test_legislators.csv", index=False)
     vote_metadata.to_csv(SYNTHETIC_PATH + "/test_vote_metadata.csv", index=False)
+
+    random_votes = generate_nominate_votes(n_leg=50, n_votes=100, beta=15.0, beta_covar=0.0, k_dim=2, k_time=1, w=np.array([1.0, 1.0]), cdf_type="logit", drop_unanimous_votes=False, replication_seed=42)

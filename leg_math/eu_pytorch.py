@@ -29,7 +29,7 @@ logger = logging.getLogger(__name__)
 pyro.enable_validation(True)
 
 # Set up environment
-gpu = True
+gpu = False
 
 if gpu:
     device = torch.device('cuda')
@@ -50,7 +50,8 @@ vote_metadata = pd.read_pickle(EU_PATH + "eu_vote_metadata.pkl")
 vote_metadata["voteid"] = vote_metadata["voteid"].astype(str)
 # vote_metadata['time_passed'] = vote_metadata['ts'].dt.year - 2004
 vote_metadata["congress"] = vote_metadata['ts'].dt.year
-vote_time_passed = vote_metadata[["voteid", "congress"]]
+vote_metadata["time_vote"] = vote_metadata['ts'].dt.year
+vote_time_passed = vote_metadata[["voteid", "congress", "time_vote"]]
 eu_votes = pd.merge(eu_votes, vote_time_passed, on='voteid')
 
 vote_df = eu_votes.rename(columns={"voteid": "vote_id"})
@@ -70,11 +71,11 @@ vote_df = pd.merge(vote_df,
 all_metrics = []
 # k_dim = 1
 # k_time = 1
-for k_dim in range(1, 5):
+for k_dim in range(1, 4):
     for k_time in range(0, 2):
         logger.info(f"Processing for k_dim={k_dim} and k_time={k_time}")
         data_params = dict(
-                       congress_cutoff=2016,
+                       congress_cutoff=2000,
                        k_dim=k_dim,
                        k_time=k_time,
                        covariates_list=[],
@@ -91,13 +92,13 @@ for k_dim in range(1, 5):
         responses = torch.tensor(vote_data["y_train"].flatten(), dtype=torch.float, device=device)
         if k_time > 0:
             time_tensor = torch.tensor(np.stack(vote_data["time_passed_train"]).transpose(), dtype=torch.float, device=device)
-            sessions_served = torch.tensor(vote_data["sessions_served"], device=device)
+            time_present = torch.tensor(vote_data["time_present"], device=device)
 
         legs_test = torch.tensor(x_test[0].flatten(), dtype=torch.long, device=device)
         votes_test = torch.tensor(x_test[1].flatten(), dtype=torch.long, device=device)
         responses_test = torch.tensor(vote_data["y_test"].flatten(), dtype=torch.float, device=device)
         if k_time > 0:
-            time_passed_test = torch.tensor(np.stack(vote_data["time_passed_test"]).transpose(), dtype=torch.float, device=device)
+            time_tensor_test = torch.tensor(np.stack(vote_data["time_passed_test"]).transpose(), dtype=torch.float, device=device)
 
         # Set some constants
         n_legs = torch.unique(legs).shape[0]
@@ -150,9 +151,9 @@ for k_dim in range(1, 5):
 
         logger.info("Set up a pytorch model with ignite")
         if k_time > 0:
-            model = wnom_full(n_legs, n_votes, k_dim, custom_init_values, k_time=k_time).to(device)
+            model = wnom_full(n_legs, n_votes, k_dim, custom_init_values, k_time=k_time, dropout_rate=0.5).to(device)
         else:
-            model = wnom_full(n_legs, n_votes, k_dim, custom_init_values).to(device)
+            model = wnom_full(n_legs, n_votes, k_dim, custom_init_values, dropout_rate=0.5).to(device)
         criterion = torch.nn.BCEWithLogitsLoss()
         # optimizer = torch.optim.AdamW(wnom_model.parameters(), amsgrad=True)
         # Default learning rate is too conservative, this works well for this dataset
@@ -165,8 +166,8 @@ for k_dim in range(1, 5):
         # Instead, just make an iterable of a list of the data
         # In theory, this could be a list of separate batches, but in our case using the whole dataset is fine
         if k_time > 0:
-            train_loader = [[legs, votes, responses, time_tensor, sessions_served]]
-            val_loader = [[legs_test, votes_test, responses_test, time_tensor, sessions_served]]
+            train_loader = [[legs, votes, responses, time_tensor, time_present]]
+            val_loader = [[legs_test, votes_test, responses_test, time_tensor_test, time_present]]
         else:
             train_loader = [[legs, votes, responses]]
             val_loader = [[legs_test, votes_test, responses_test]]
@@ -221,17 +222,15 @@ for k_dim in range(1, 5):
         pbar.attach(trainer)
         # pbar.attach(trainer, ['loss'])
 
-
         def score_function(engine):
             # logger.warning(engine.state.metrics)
             val_loss = engine.state.metrics['bce']
             return -val_loss
 
-
-        handler = EarlyStopping(patience=5, score_function=score_function, trainer=trainer)
+        handler = EarlyStopping(patience=9, score_function=score_function, trainer=trainer)
         validation_evaluator.add_event_handler(Events.COMPLETED, handler)
 
-        checkpointer = ModelCheckpoint(EU_PATH + "checkpoints", f'wnom_full_{k_dim}_{k_time}', n_saved=5, create_dir=True, require_empty=False)
+        checkpointer = ModelCheckpoint(EU_PATH + "checkpoints", f'wnom_full_{k_dim}_{k_time}', n_saved=9, create_dir=True, require_empty=False)
         trainer.add_event_handler(Events.EPOCH_COMPLETED, checkpointer, {'wnom_full': model})
 
         @trainer.on(Events.EPOCH_COMPLETED)
@@ -288,6 +287,32 @@ metrics_df = pd.DataFrame(all_metrics)
 metrics_df.to_pickle(EU_PATH + f'checkpoints/all_metrics_wnom_full.pkl')
 
 metrics_df = pd.read_pickle(EU_PATH + f'checkpoints/all_metrics_wnom_full.pkl')
+
+m = torch.nn.Dropout(p=0.2)
+input = torch.randn(5, 4)
+output = m(input)
+
+m = torch.nn.Dropout2d(p=0.5)
+m(input.unsqueeze(-1).unsqueeze(-1)).shape
+
+torch.sum(model.ideal_points[legs] * time_tensor.unsqueeze(1), axis=2).max()
+torch.sum(model.ideal_points[legs] * time_tensor.unsqueeze(1), axis=2).min()
+model.ideal_points[:, 0, 0]
+
+asdf = torch.sum(model.ideal_points * torch.stack([torch.ones(size=time_present.shape), time_present], dim=1).unsqueeze(1), axis=2)
+asdf
+k_dim
+
+model = wnom_full(n_legs, n_votes, k_dim, custom_init_values, k_time=k_time)
+model.load_state_dict(torch.load(EU_PATH + "checkpoints/" + f'wnom_full_{k_dim}_{k_time}_wnom_full_199.pt'))
+temp_ideal_1 = model.ideal_points.detach().numpy()
+
+model = wnom_full(n_legs, n_votes, k_dim, custom_init_values, k_time=k_time)
+model.load_state_dict(torch.load(EU_PATH + "checkpoints/" + f'wnom_full_{k_dim}_{k_time}_wnom_full_198.pt'))
+temp_ideal_2 = model.ideal_points.detach().numpy()
+
+(temp_ideal_1 - temp_ideal_2)
+
 # metrics_df["n"] = responses.shape[0]
 # metrics_df["bic"] = metrics_df["k"] * np.log(metrics_df["n"]) - (2 * metrics_df["log_like"])
 # np.exp((metrics_df["aic"].min() - metrics_df["aic"]) / 2)
