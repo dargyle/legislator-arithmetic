@@ -68,7 +68,7 @@ def bayes_irt_basic(legs, votes, y=None, k_dim=1, device=None):
         return y
 
 
-def bayes_irt_full(legs, votes, y=None, covariates=None, time_passed=None, k_dim=1, device=None):
+def bayes_irt_full(legs, n_legs, votes, n_votes, y=None, covariates=None, n_covar=0, time_passed=None, k_dim=1, device=None):
     """Define a core ideal point model
 
     Args:
@@ -77,10 +77,10 @@ def bayes_irt_full(legs, votes, y=None, covariates=None, time_passed=None, k_dim
         y: a tensor of vote choices
         k_dim: desired dimensions of the models
     """
-    n_legs = torch.unique(legs).shape[0]
-    n_votes = torch.unique(votes).shape[0]
-    if covariates is not None:
-        n_covar = covariates.shape[1]
+#     n_legs = torch.unique(legs).shape[0]
+#     n_votes = torch.unique(votes).shape[0]
+#     if covariates is not None:
+#         n_covar = covariates.shape[1]
 
     # Set up parameter plates for all of the parameters
     if time_passed is not None:

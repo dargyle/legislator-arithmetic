@@ -31,6 +31,42 @@ logger = logging.getLogger(__name__)
 pyro.enable_validation(True)
 
 
+def in1d(ar1, ar2):
+    # Hack because pytorch has no isin equivalent
+    # https://github.com/pytorch/pytorch/issues/3025
+    # A mask of the length the largest index value
+    mask = ar2.new_zeros((max(ar1.max(), ar2.max()) + 1,), dtype=torch.bool)
+    # Change values of the mask to True for things in second array
+    mask[ar2.unique()] = True
+    # Return the mask value for each value in the first array
+    return mask[ar1]
+
+
+def gen_shuffled_data(n_shuffles, shuffle_data_list, static_data_list=[], p=0.8, shuffle=True):
+    vote_ids = torch.unique(shuffle_data_list[1])
+    n_samples = round(p * len(vote_ids))
+
+    num = 0
+    while num <= n_shuffles:
+        # Get a random list of vote ids without replacement
+        # Get a random permutation and then select the desired number of elements
+        random_indexer = torch.randperm(len(vote_ids), device=shuffle_data_list[1].device)[:n_samples]
+        random_vote_ids = vote_ids[random_indexer]
+        # Get a mask the length of all the data
+        mask = in1d(shuffle_data_list[1], random_vote_ids)
+
+        temp_list = [ii[mask] for ii in shuffle_data_list]
+     
+        if shuffle:
+            # Shuffle the data around
+            idx = torch.randperm(temp_list[1].shape[0])
+            temp_list = [t[idx].view(t.size()) for t in temp_list]
+
+        final_list = temp_list + static_data_list
+        yield final_list
+        num += 1
+
+
 class wnom_basic(nn.Module):
     """
     A class for implementing wnominate in pytorch
@@ -94,9 +130,7 @@ class wnom_full(nn.Module):
 
         if k_time > 0:
             if pretrained is not None:
-                first_dim = pretrained
-                other_dims = 0.000001 * (torch.rand(n_legs, k_dim, k_time) - 0.5)
-                self.ideal_points = nn.Parameter(torch.cat([first_dim.unsqueeze(-1), other_dims], dim=2))
+                self.ideal_points = nn.Parameter(pretrained)
             else:
                 self.ideal_points = nn.Parameter((torch.rand(n_legs, k_dim, k_time + 1) - 0.5))
         else:
@@ -326,6 +360,14 @@ if __name__ == '__main__':
     n_votes = torch.unique(votes).shape[0]
     # n_covar = covariates.shape[1]
 
+    # Adjust init values for time setup
+    if k_time > 0:
+        first_dim = custom_init_values
+        other_dims = 0.000001 * (torch.rand(n_legs, k_dim, k_time, device=device) - 0.5)
+        pretrained = torch.cat([first_dim.unsqueeze(-1), other_dims], dim=2)
+    else:
+        pretrained = custom_init_values
+    
     logger.info("Setup the pytorch model")
     wnom_model = wnom_full(n_legs, n_votes, k_dim, k_time=k_time).to(device)
 
@@ -377,9 +419,9 @@ if __name__ == '__main__':
     logger.info("Set up a pytorch model with ignite")
     k_time = 0
     if k_time > 0:
-        model = wnom_full(n_legs, n_votes, k_dim, custom_init_values, k_time=k_time, dropout=0.2).to(device)
+        model = wnom_full(n_legs, n_votes, k_dim, pretrained, k_time=k_time, dropout_rate=0.2).to(device)
     else:
-        model = wnom_full(n_legs, n_votes, k_dim, custom_init_values, dropout_rate=0.2).to(device)
+        model = wnom_full(n_legs, n_votes, k_dim, pretrained, dropout_rate=0.2).to(device)
     criterion = torch.nn.BCEWithLogitsLoss()
     # optimizer = torch.optim.AdamW(wnom_model.parameters(), amsgrad=True)
     # Default learning rate is too conservative, this works well for this dataset
@@ -490,9 +532,9 @@ if __name__ == '__main__':
     logger.info("Set up a pytorch model with ignite")
     k_time = 1
     if k_time > 0:
-        model = wnom_full(n_legs, n_votes, k_dim, custom_init_values, k_time=k_time).to(device)
+        model = wnom_full(n_legs, n_votes, k_dim, pretrained, k_time=k_time).to(device)
     else:
-        model = wnom_full(n_legs, n_votes, k_dim, custom_init_values).to(device)
+        model = wnom_full(n_legs, n_votes, k_dim, pretrained).to(device)
     criterion = torch.nn.BCEWithLogitsLoss()
     # optimizer = torch.optim.AdamW(wnom_model.parameters(), amsgrad=True)
     # Default learning rate is too conservative, this works well for this dataset
