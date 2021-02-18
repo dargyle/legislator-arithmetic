@@ -68,7 +68,7 @@ def bayes_irt_basic(legs, votes, y=None, k_dim=1, device=None):
         return y
 
 
-def bayes_irt_full(legs, n_legs, votes, n_votes, y=None, covariates=None, n_covar=0, time_passed=None, k_dim=1, device=None):
+def bayes_irt_full(legs, n_legs, votes, n_votes, y=None, covariates=None, n_covar=0, k_dim=1, time_passed=None, k_time=0, device=None):
     """Define a core ideal point model
 
     Args:
@@ -84,10 +84,8 @@ def bayes_irt_full(legs, n_legs, votes, n_votes, y=None, covariates=None, n_cova
 
     # Set up parameter plates for all of the parameters
     if time_passed is not None:
-        k_time = time_passed.shape[1]
-
         with pyro.plate('thetas', n_legs, dim=-3, device=device):
-            ideal_point = pyro.sample('theta', dist.Normal(torch.zeros(k_dim, k_time, device=device), torch.ones(k_dim, k_time, device=device)))
+            ideal_point = pyro.sample('theta', dist.Normal(torch.zeros(k_dim, k_time + 1, device=device), torch.ones(k_dim, k_time + 1, device=device)))
     else:
         with pyro.plate('thetas', n_legs, dim=-2, device=device):
             ideal_point = pyro.sample('theta', dist.Normal(torch.zeros(k_dim, device=device), torch.ones(k_dim, device=device)))
