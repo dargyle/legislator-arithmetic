@@ -82,41 +82,41 @@ for k_dim in range(1, 4):
                 covariates = torch.tensor(vote_data["covariates_train"], dtype=torch.float, device=device)
             if k_time > 0:
                 time_tensor = torch.tensor(np.stack(vote_data["time_passed_train"]).transpose(), dtype=torch.float, device=device)
-                time_present = torch.tensor(vote_data["time_present"], device=device)    
-                
+                time_present = torch.tensor(vote_data["time_present"], device=device)
+
             legs_test = torch.tensor(x_test[0].flatten(), dtype=torch.long, device=device)
             votes_test = torch.tensor(x_test[1].flatten(), dtype=torch.long, device=device)
             responses_test = torch.tensor(vote_data["y_test"].flatten(), dtype=torch.float, device=device)
             if covariates_list:
-                covariates_test = torch.tensor(vote_data["covariates_test"], dtype=torch.float, device=device)            
+                covariates_test = torch.tensor(vote_data["covariates_test"], dtype=torch.float, device=device)
             if k_time > 0:
                 time_tensor_test = torch.tensor(np.stack(vote_data["time_passed_test"]).transpose(), dtype=torch.float, device=device)
-                
+
             # Set some constants
             n_legs = vote_data["J"]
             n_votes = vote_data["M"]
             if covariates_list:
                 n_covar = covariates.shape[1]
-                
+
             # Make train and test data bundles
             core_data = [legs, n_legs, votes, n_votes]
             core_data_test = [legs_test, n_legs, votes_test, n_votes]
             aux_data = {}
-            aux_data_test = {}            
+            aux_data_test = {}
             if covariates_list:
                 aux_data["k_dim"] = k_dim
                 aux_data["covariates"] = covariates
                 aux_data["n_covar"] = n_covar
-                
-                aux_data_test["k_dim"] = k_dim                
+
+                aux_data_test["k_dim"] = k_dim
                 aux_data_test["covariates"] = covariates_test
-                aux_data_test["n_covar"] = n_covar                
+                aux_data_test["n_covar"] = n_covar
             if k_time > 0:
                 aux_data["k_time"] = k_time
                 aux_data["time_passed"] = time_tensor
-                
+
                 aux_data_test["k_time"] = k_time
-                aux_data_test["time_passed"] = time_tensor_test                 
+                aux_data_test["time_passed"] = time_tensor_test
 
             # Setup the optimizer
             optim = Adam({'lr': 0.1})
@@ -134,7 +134,7 @@ for k_dim in range(1, 4):
             min_loss = float('inf') # initialize to infinity
             patience = 0
             for j in range(5000):
-                loss = svi.step(*core_data, y=responses, device=device, **aux_data)                
+                loss = svi.step(*core_data, y=responses, device=device, **aux_data)
                 if j % 100 == 0:
                     logger.info("[epoch %04d] loss: %.4f" % (j + 1, loss))
                     min_loss = min(loss, min_loss)
@@ -148,7 +148,7 @@ for k_dim in range(1, 4):
 
 
             # Save the parameters for future use
-            pyro.get_param_store().save(US_PATH + f'bayes/params_vb_{k_dim}_{k_time}_{"".join(covariates_list)}.pkl')        
+            pyro.get_param_store().save(US_PATH + f'bayes/params_vb_{k_dim}_{k_time}_{"".join(covariates_list)}.pkl')
 
             # # Get the parameters into pandas dataframes
             # ideal_points = pd.concat(
@@ -190,7 +190,7 @@ for k_dim in range(1, 4):
             # Calculate log loss and accuracy scores, in sample
             train_metrics = {"bce": criterion(preds, responses).item(),
                              "log_like": log_like(preds, responses).item(),
-                             "accuracy": (1.0 * (responses == preds.round())).mean().item(), 
+                             "accuracy": (1.0 * (responses == preds.round())).mean().item(),
                             }
             logger.info(f'Train loss (VB): {train_metrics["bce"]}')
             logger.info(f'Train accuracy (VB): {train_metrics["accuracy"]}')
@@ -198,7 +198,7 @@ for k_dim in range(1, 4):
             # Calculate log loss and accuracy scores, out of sample
             test_metrics = {"bce": criterion(preds_test, responses_test).item(),
                             "log_like": log_like(preds_test, responses_test).item(),
-                            "accuracy": (1.0 * (responses_test == preds_test.round())).mean().item(), 
+                            "accuracy": (1.0 * (responses_test == preds_test.round())).mean().item(),
                             }
             logger.info(f'Test loss (VB): {test_metrics["bce"]}')
             logger.info(f'Test accuracy (VB): {test_metrics["accuracy"]}')
@@ -216,7 +216,7 @@ for k_dim in range(1, 4):
             metrics["test_n"] = responses_test.shape[0]
             metrics["test_k"] = k
             metrics["test_aic"] = ((2 * k) - (2 * -1 * metrics["test_log_like"]))
-            metrics["test_bic"] = k * np.log(metrics["test_n"]) - (2 * -1 * metrics["test_log_like"])        
+            metrics["test_bic"] = k * np.log(metrics["test_n"]) - (2 * -1 * metrics["test_log_like"])
 
             final_metrics = {**data_params, **metrics}
             pd.Series(final_metrics).to_pickle(US_PATH + f'bayes/metrics_vb_{k_dim}_{k_time}_{"".join(covariates_list)}.pkl')
@@ -240,8 +240,8 @@ for k_dim in range(1, 4):
                 init_values = init_to_value(values={"theta": pyro.param("AutoNormal.locs.theta").data,
                                                     "beta": pyro.param("AutoNormal.locs.beta").data,
                                                     "alpha": pyro.param("AutoNormal.locs.alpha").data,
-                                                    })    
-                
+                                                    })
+
             # Set up sampling alrgorithm
             nuts_kernel = NUTS(bayes_irt_full, adapt_step_size=True, jit_compile=True, ignore_jit_warnings=True, init_strategy=init_values)
             # For real inference should probably increase the number of samples, but this is part is slow and enough to test
@@ -255,7 +255,7 @@ for k_dim in range(1, 4):
             with open(US_PATH + f'bayes/params_mcmc_{k_dim}_{k_time}_{"".join(covariates_list)}.pkl', 'wb') as f:
                 pickle.dump(hmc_posterior, f)
             # with open(US_PATH + f'bayes/params_mcmc_{k_dim}_{k_time}_{"".join(covariates_list)}.pkl', 'rb') as f:
-            #     hmc_posterior = pickle.load(f)  
+            #     hmc_posterior = pickle.load(f)
 
             # Again, this would be the normal way, can't do it because of memory issues
             # samples = hmc_posterior.get_samples()
@@ -277,7 +277,7 @@ for k_dim in range(1, 4):
             # Calculate log loss and accuracy scores, in sample
             train_metrics = {"bce": criterion(preds, responses).item(),
                              "log_like": log_like(preds, responses).item(),
-                             "accuracy": (1.0 * (responses == preds.round())).mean().item(), 
+                             "accuracy": (1.0 * (responses == preds.round())).mean().item(),
                             }
             logger.info(f'Train loss (VB): {train_metrics["bce"]}')
             logger.info(f'Train accuracy (VB): {train_metrics["accuracy"]}')
@@ -285,7 +285,7 @@ for k_dim in range(1, 4):
             # Calculate log loss and accuracy scores, out of sample
             test_metrics = {"bce": criterion(preds_test, responses_test).item(),
                             "log_like": log_like(preds_test, responses_test).item(),
-                            "accuracy": (1.0 * (responses_test == preds_test.round())).mean().item(), 
+                            "accuracy": (1.0 * (responses_test == preds_test.round())).mean().item(),
                             }
             logger.info(f'Test loss (VB): {test_metrics["bce"]}')
             logger.info(f'Test accuracy (VB): {test_metrics["accuracy"]}')
@@ -303,7 +303,7 @@ for k_dim in range(1, 4):
             metrics["test_n"] = responses_test.shape[0]
             metrics["test_k"] = k
             metrics["test_aic"] = ((2 * k) - (2 * -1 * metrics["test_log_like"]))
-            metrics["test_bic"] = k * np.log(metrics["test_n"]) - (2 * -1 * metrics["test_log_like"])        
+            metrics["test_bic"] = k * np.log(metrics["test_n"]) - (2 * -1 * metrics["test_log_like"])
 
             final_metrics = {**data_params, **metrics}
             pd.Series(final_metrics).to_pickle(US_PATH + f'bayes/metrics_mcmc_{k_dim}_{k_time}_{"".join(covariates_list)}.pkl')
@@ -311,8 +311,8 @@ for k_dim in range(1, 4):
             mcmc_metrics += [final_metrics]
 
 metrics_df = pd.DataFrame(vb_metrics)
-metrics_df.to_pickle(US_PATH + f'bayes/all_metrics_vb.pkl')            
-            
+metrics_df.to_pickle(US_PATH + f'bayes/all_metrics_vb.pkl')
+
 metrics_df = pd.DataFrame(mcmc_metrics)
 metrics_df.to_pickle(US_PATH + f'bayes/all_metrics_mcmc.pkl')
 

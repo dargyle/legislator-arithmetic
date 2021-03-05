@@ -56,7 +56,7 @@ def gen_shuffled_data(n_shuffles, shuffle_data_list, static_data_list=[], p=0.8,
         mask = in1d(shuffle_data_list[1], random_vote_ids)
 
         temp_list = [ii[mask] for ii in shuffle_data_list]
-     
+
         if shuffle:
             # Shuffle the data around
             idx = torch.randperm(temp_list[1].shape[0])
@@ -367,7 +367,7 @@ if __name__ == '__main__':
         pretrained = torch.cat([first_dim.unsqueeze(-1), other_dims], dim=2)
     else:
         pretrained = custom_init_values
-    
+
     logger.info("Setup the pytorch model")
     wnom_model = wnom_full(n_legs, n_votes, k_dim, k_time=k_time).to(device)
 
