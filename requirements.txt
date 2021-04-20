@@ -74,7 +74,7 @@ prometheus-client==0.8.0
 prompt-toolkit==3.0.6
 protobuf==3.13.0
 ptyprocess==0.6.0
-py==1.9.0
+py==1.10.0
 py-irt @ git+https://github.com/jplalor/py-irt.git@1dbd485be295495a3aa69eaf86fbb317181f0ce5
 pyarrow==1.0.0
 pyasn1==0.4.8
