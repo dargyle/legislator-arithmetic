@@ -72,7 +72,7 @@ plotly-express==0.4.1
 pluggy==0.13.1
 prometheus-client==0.8.0
 prompt-toolkit==3.0.6
-protobuf==3.13.0
+protobuf==3.15.0
 ptyprocess==0.6.0
 py==1.9.0
 py-irt @ git+https://github.com/jplalor/py-irt.git@1dbd485be295495a3aa69eaf86fbb317181f0ce5
