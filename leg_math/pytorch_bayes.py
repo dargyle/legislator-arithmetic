@@ -16,8 +16,8 @@ from pyro.ops.stats import hpdi, waic
 import pandas as pd
 import numpy as np
 
-from ..data_generation.data_processing import process_data, format_model_data
-from ..data_generation.random_votes import generate_nominate_votes
+from .data_generation.data_processing import process_data, format_model_data
+from .data_generation.random_votes import generate_nominate_votes
 
 from constants import DATA_PATH
 
@@ -46,13 +46,16 @@ def bayes_irt_basic(legs, votes, y=None, k_dim=1, device=None):
 
     # Set up parameter plates for all of the parameters
     with pyro.plate('thetas', n_legs, dim=-2, device=device):
-        ideal_point = pyro.sample('theta', dist.Normal(torch.zeros(k_dim, device=device), torch.ones(k_dim, device=device)))
+        ideal_point = pyro.sample('theta', dist.Normal(torch.zeros(
+            k_dim, device=device), torch.ones(k_dim, device=device)))
 
     with pyro.plate('betas', n_votes, dim=-2,  device=device):
-        polarity = pyro.sample('beta', dist.Normal(torch.zeros(k_dim, device=device), 5.0 * torch.ones(k_dim, device=device)))
+        polarity = pyro.sample('beta', dist.Normal(torch.zeros(
+            k_dim, device=device), 5.0 * torch.ones(k_dim, device=device)))
 
     with pyro.plate('alphas', n_votes, device=device):
-        popularity = pyro.sample('alpha', dist.Normal(torch.zeros(1, device=device), 5.0 * torch.ones(1, device=device)))
+        popularity = pyro.sample('alpha', dist.Normal(torch.zeros(
+            1, device=device), 5.0 * torch.ones(1, device=device)))
 
     # Combine parameters
     logit = torch.sum(ideal_point[legs] * polarity[votes], dim=-1) + popularity[votes]
@@ -85,16 +88,20 @@ def bayes_irt_full(legs, n_legs, votes, n_votes, y=None, covariates=None, n_cova
     # Set up parameter plates for all of the parameters
     if time_passed is not None:
         with pyro.plate('thetas', n_legs, dim=-3, device=device):
-            ideal_point = pyro.sample('theta', dist.Normal(torch.zeros(k_dim, k_time + 1, device=device), torch.ones(k_dim, k_time + 1, device=device)))
+            ideal_point = pyro.sample('theta', dist.Normal(torch.zeros(
+                k_dim, k_time + 1, device=device), torch.ones(k_dim, k_time + 1, device=device)))
     else:
         with pyro.plate('thetas', n_legs, dim=-2, device=device):
-            ideal_point = pyro.sample('theta', dist.Normal(torch.zeros(k_dim, device=device), torch.ones(k_dim, device=device)))
+            ideal_point = pyro.sample('theta', dist.Normal(torch.zeros(
+                k_dim, device=device), torch.ones(k_dim, device=device)))
 
     with pyro.plate('betas', n_votes, dim=-2,  device=device):
-        polarity = pyro.sample('beta', dist.Normal(torch.zeros(k_dim, device=device), 5.0 * torch.ones(k_dim, device=device)))
+        polarity = pyro.sample('beta', dist.Normal(torch.zeros(
+            k_dim, device=device), 5.0 * torch.ones(k_dim, device=device)))
 
     with pyro.plate('alphas', n_votes, device=device):
-        popularity = pyro.sample('alpha', dist.Normal(torch.zeros(1, device=device), 5.0 * torch.ones(1, device=device)))
+        popularity = pyro.sample('alpha', dist.Normal(torch.zeros(
+            1, device=device), 5.0 * torch.ones(1, device=device)))
 
     # Slice the parameter arrays according to the data
     # Allows vectorization of samples later
@@ -109,7 +116,8 @@ def bayes_irt_full(legs, n_legs, votes, n_votes, y=None, covariates=None, n_cova
 
     if covariates is not None:
         with pyro.plate('coefs', n_covar, device=device):
-            coef = pyro.sample('coef', dist.Normal(torch.zeros(1, device=device), 5.0 * torch.ones(1, device=device)))
+            coef = pyro.sample('coef', dist.Normal(torch.zeros(
+                1, device=device), 5.0 * torch.ones(1, device=device)))
         covar_combo = torch.matmul(covariates, coef.unsqueeze(-1)).squeeze()
 
         logit = temp_ideal + use_popularity + covar_combo
@@ -159,7 +167,8 @@ def normalize_ideal_points(theta, beta, alpha, verify_predictions=False):
 
         prediction - prediction_t
 
-        assert torch.allclose(prediction, prediction_t, atol=1e-05), "Transformation does not match!"
+        assert torch.allclose(prediction, prediction_t,
+                              atol=1e-05), "Transformation does not match!"
 
     results = {"theta": theta_t, "beta": beta_t, "alpha": alpha_t}
 
@@ -176,7 +185,8 @@ if __name__ == '__main__':
         device = torch.device('cpu')
 
     logger.info("Generate a test dataset that has 2 dimensions and has a covariate")
-    votes = generate_nominate_votes(n_leg=50, n_votes=100, beta=15.0, beta_covar=5.0, k_dim=2, w=np.array([1.0, 1.0]), cdf_type="logit", drop_unanimous_votes=False, replication_seed=42)
+    votes = generate_nominate_votes(n_leg=50, n_votes=100, beta=15.0, beta_covar=5.0, k_dim=2, w=np.array(
+        [1.0, 1.0]), cdf_type="logit", drop_unanimous_votes=False, replication_seed=42)
     vote_df = votes.reset_index()
 
     # Process the data for the model
@@ -191,9 +201,11 @@ if __name__ == '__main__':
                    validation_split=0.0,
                    )
     vote_data = process_data(**data_params)
-    custom_init_values = torch.tensor(vote_data["init_embedding"].values, dtype=torch.float, device=device)
+    custom_init_values = torch.tensor(
+        vote_data["init_embedding"].values, dtype=torch.float, device=device)
 
-    x_train, x_test, sample_weights = format_model_data(vote_data, data_params, weight_by_frequency=False)
+    x_train, x_test, sample_weights = format_model_data(
+        vote_data, data_params, weight_by_frequency=False)
 
     logger.info("Convert training and test data to tensors")
     legs = torch.tensor(x_train[0].flatten(), dtype=torch.long, device=device)
@@ -212,7 +224,8 @@ if __name__ == '__main__':
     optim = Adam({'lr': 0.1})
 
     # Define the guide, intialize to the values returned from process data
-    guide = autoguides.AutoNormal(bayes_irt_full, init_loc_fn=init_to_value(values={'theta': custom_init_values}))
+    guide = autoguides.AutoNormal(bayes_irt_full, init_loc_fn=init_to_value(
+        values={'theta': custom_init_values}))
     # guide = ideal_point_guide(legs, votes, responses, i)
 
     # Setup the variational inference
@@ -236,7 +249,8 @@ if __name__ == '__main__':
                                         })
 
     # Set up sampling alrgorithm
-    nuts_kernel = NUTS(bayes_irt_full, adapt_step_size=True, jit_compile=True, ignore_jit_warnings=True, init_strategy=init_values)
+    nuts_kernel = NUTS(bayes_irt_full, adapt_step_size=True, jit_compile=True,
+                       ignore_jit_warnings=True, init_strategy=init_values)
     # For real inference should probably increase the number of samples, but this is slow and enough to test
     hmc_posterior = MCMC(nuts_kernel, num_samples=250, warmup_steps=100)
     # Run the model
@@ -263,22 +277,26 @@ if __name__ == '__main__':
                    validation_split=0.0,
                    )
     vote_data = process_data(**data_params)
-    custom_init_values = torch.tensor(vote_data["init_embedding"].values, dtype=torch.float, device=device)
+    custom_init_values = torch.tensor(
+        vote_data["init_embedding"].values, dtype=torch.float, device=device)
 
-    x_train, x_test, sample_weights = format_model_data(vote_data, data_params, weight_by_frequency=False)
+    x_train, x_test, sample_weights = format_model_data(
+        vote_data, data_params, weight_by_frequency=False)
 
     logger.info("Convert training and test data to tensors")
     legs = torch.tensor(x_train[0].flatten(), dtype=torch.long, device=device)
     votes = torch.tensor(x_train[1].flatten(), dtype=torch.long, device=device)
     responses = torch.tensor(vote_data["y_train"].flatten(), dtype=torch.float, device=device)
     covariates = torch.tensor(vote_data["covariates_train"], dtype=torch.float, device=device)
-    time_passed = torch.tensor(np.stack(vote_data["time_passed_train"]).transpose(), dtype=torch.float, device=device)
+    time_passed = torch.tensor(
+        np.stack(vote_data["time_passed_train"]).transpose(), dtype=torch.float, device=device)
 
     legs_test = torch.tensor(x_test[0].flatten(), dtype=torch.long, device=device)
     votes_test = torch.tensor(x_test[1].flatten(), dtype=torch.long, device=device)
     responses_test = torch.tensor(vote_data["y_test"].flatten(), dtype=torch.float, device=device)
     covariates_test = torch.tensor(vote_data["covariates_test"], dtype=torch.float, device=device)
-    time_passed_test = torch.tensor(np.stack(vote_data["time_passed_test"]).transpose(), dtype=torch.float, device=device)
+    time_passed_test = torch.tensor(
+        np.stack(vote_data["time_passed_test"]).transpose(), dtype=torch.float, device=device)
 
     # Choose the optimizer used by the variational algorithm
     optim = Adam({'lr': 0.1})
@@ -294,7 +312,8 @@ if __name__ == '__main__':
     logger.info("Run variational inference")
     pyro.clear_param_store()
     for j in range(2000):
-        loss = svi.step(legs, votes, y=responses, covariates=covariates, time_passed=time_passed, k_dim=k_dim)
+        loss = svi.step(legs, votes, y=responses, covariates=covariates,
+                        time_passed=time_passed, k_dim=k_dim)
         if j % 100 == 0:
             logger.info("[epoch %04d] loss: %.4f" % (j + 1, loss))
 
@@ -308,11 +327,13 @@ if __name__ == '__main__':
                                         })
 
     # Set up sampling alrgorithm
-    nuts_kernel = NUTS(bayes_irt_full, adapt_step_size=True, jit_compile=True, ignore_jit_warnings=True, init_strategy=init_values)
+    nuts_kernel = NUTS(bayes_irt_full, adapt_step_size=True, jit_compile=True,
+                       ignore_jit_warnings=True, init_strategy=init_values)
     # For real inference should probably increase the number of samples, but this is slow and enough to test
     hmc_posterior = MCMC(nuts_kernel, num_samples=250, warmup_steps=100)
     # Run the model
-    hmc_posterior.run(legs, votes, y=responses, covariates=covariates, time_passed=time_passed, k_dim=k_dim, device=device)
+    hmc_posterior.run(legs, votes, y=responses, covariates=covariates,
+                      time_passed=time_passed, k_dim=k_dim, device=device)
 
     # Summarize the results
     hmc_posterior.summary()

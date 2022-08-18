@@ -15,8 +15,8 @@ from pyro.infer.autoguide.initialization import init_to_value
 import pandas as pd
 import numpy as np
 
-from data_generation.data_processing import process_data, format_model_data
-from data_generation.random_votes import generate_nominate_votes
+from .data_processing import process_data, format_model_data
+from .random_votes import generate_nominate_votes
 
 from constants import DATA_PATH
 
