@@ -8,6 +8,10 @@ from pyro.optim import Adam, SGD
 import pyro.contrib.autoguide as autoguides
 from torch.distributions import constraints
 
+import pyro.poutine as poutine
+from pyro.infer.elbo import ELBO
+from pyro.infer.util import torch_item
+
 from pyro.infer.autoguide.initialization import init_to_value
 
 import pandas as pd
@@ -29,6 +33,7 @@ logging.basicConfig(format='%(asctime)s - %(levelname)s - %(filename)s - %(funcN
 logger = logging.getLogger(__name__)
 
 pyro.enable_validation(True)
+
 
 # Set up environment
 gpu = False
@@ -165,7 +170,7 @@ k_dim = 2
 k_time = 1
 covariates_list = []
 data_params = dict(
-               congress_cutoff=93,
+               congress_cutoff=110,
                k_dim=k_dim,
                k_time=k_time,
                covariates_list=covariates_list,
@@ -211,11 +216,8 @@ ind_time_tensor_test = time_tensor_test[:, 1]
 
 max_time = ind_time_tensor.max()
 
-
-import pyro.poutine as poutine
-from pyro.infer.elbo import ELBO
-from pyro.infer.util import torch_item
-
+indices = (torch.arange(start=1, end=max_time + 1, device=device).repeat(n_legs, 1))
+disturb_mask = indices.le(sessions_served.unsqueeze(-1)).unsqueeze(1)
 
 class custom_SVI(object):
     """
@@ -339,7 +341,7 @@ class custom_SVI(object):
 
 
 class bayes_dynamic:
-    def __init__(self, n_legs, n_votes, max_time, k_dim=1, guide_type="auto", custom_init_values=None, device=None):
+    def __init__(self, n_legs, n_votes, max_time, k_dim=1, guide_type="auto", custom_init_values=None, disturb_mask=None, device=None):
         super().__init__()
         self.n_legs = n_legs
         self.n_votes = n_votes
@@ -348,45 +350,55 @@ class bayes_dynamic:
         self.guide_type = guide_type
         self.custom_init_values = custom_init_values
         self.device = device
+        self.disturb_mask = disturb_mask
 
     def model(self, legs, votes, ind_time_tensor, obs=None):
-        with pyro.plate('thetas', n_legs, dim=-2, device=device):
-            init_ideal_point = pyro.sample('theta', dist.Normal(torch.zeros(self.k_dim, device=self.device), torch.ones(self.k_dim, device=self.device)))
+        # Declare context managers, implies conditional independence across the specified dimension
+        # 3 Dimensions: legislator/vote/observation, ideology dimension, time dimension
+        leg_plate = pyro.plate('legs', self.n_legs, dim=-3, device=self.device)
+        vote_plate = pyro.plate('votes', self.n_votes, dim=-3, device=self.device)
+        dim_plate = pyro.plate('dim', self.k_dim, dim=-2, device=self.device)
+        time_plate = pyro.plate('time', self.max_time, dim=-1, device=self.device)
 
-        with pyro.plate('sigmas', self.n_legs, dim=-2, device=self.device):
-            # atten = pyro.sample('sigma', dist.Exponential(1.0 * torch.ones(self.k_dim, device=self.device)))
-            # atten = pyro.sample('sigma', dist.Normal(torch.zeros(self.k_dim, device=self.device), torch.ones(self.k_dim, device=self.device)))
-            atten = pyro.sample('sigma', dist.Gamma(torch.ones(self.k_dim, device=self.device), torch.ones(self.k_dim, device=self.device)))
+        with leg_plate, dim_plate:
+            init_ideal_point = pyro.sample('theta', dist.Normal(0, 1))
+            # atten = pyro.sample('tau', dist.Gamma(2, 0.1))
+            atten = pyro.sample('tau', dist.HalfNormal(1.0))
 
-        with pyro.plate('vs', self.n_legs, dim=-3, device=self.device):
-            disturb = pyro.sample('v', dist.Normal(torch.zeros(self.k_dim, max_time, device=self.device), torch.ones(self.k_dim, max_time, device=self.device)))
+        if self.disturb_mask is not None:
+            with leg_plate, dim_plate, time_plate:
+                with poutine.mask(mask=self.disturb_mask):
+                    disturb = pyro.sample('v', dist.Normal(0, 1))
+                    combo_disturb = (atten * disturb).cumsum(-1)
+        else:
+            with leg_plate, dim_plate, time_plate:
+                disturb = pyro.sample('v', dist.Normal(0, 1))
+                combo_disturb = (atten * disturb).cumsum(-1)
 
-        with pyro.plate('betas', self.n_votes, dim=-2,  device=self.device):
-            polarity = pyro.sample('beta', dist.Normal(torch.zeros(self.k_dim, device=self.device), 5.0 * torch.ones(self.k_dim, device=self.device)))
+        with vote_plate, dim_plate:
+            polarity = pyro.sample('beta', dist.Normal(0, 5))
 
-        with pyro.plate('alphas', self.n_votes, dim=-2, device=self.device):
-            popularity = pyro.sample('alpha', dist.Normal(torch.zeros(1, device=self.device), 5.0 * torch.ones(1, device=self.device)))
+        with vote_plate:
+            popularity = pyro.sample('alpha', dist.Normal(0, 5))
 
-        temp_ideal = init_ideal_point.unsqueeze(-1)
-        # print(temp_ideal.shape)
+        # print(init_ideal_point.shape)
         # print(atten.shape)
         # print(disturb.shape)
-        all_temp_ideal = temp_ideal + (atten.unsqueeze(-1) * disturb).cumsum(dim=-1)
-        # print(all_temp_ideal.shape)
-
-        ideal_point = pyro.deterministic("ideal_point", torch.cat([temp_ideal, all_temp_ideal], dim=-1))
-        # ideal_point.shape
+        # print((atten * disturb).cumsum(dim=2).shape)
+        ideal_point = pyro.deterministic("ideal_point", torch.cat([init_ideal_point, init_ideal_point + combo_disturb], dim=-1))
 
         batch_ideal = ideal_point[legs, :, ind_time_tensor]
         polarity_batch = polarity[votes]
         popularity_batch = popularity[votes]
-
-        # batch_ideal.shape
-        # polarity_batch.shape
-        # popularity_batch.shape
+        # print(batch_ideal.device)
+        # print(polarity_batch.shape)
+        # print(popularity_batch.shape)
 
         # Combine parameters
-        logit = torch.sum(batch_ideal * polarity_batch, dim=-1) + popularity_batch.squeeze()
+        # print(torch.sum(batch_ideal * polarity_batch.squeeze(), dim=-1).shape)
+        # print(popularity_batch.squeeze().shape)
+        logit = torch.sum(batch_ideal * polarity_batch.squeeze(), dim=-1) + popularity_batch.squeeze()
+        # print(logit.shape)
 
         if obs is not None:
             # If training outcomes are provided, run the sampling statement for the given data
@@ -400,32 +412,44 @@ class bayes_dynamic:
 
     def guide_basic(self, legs, votes, ind_time_tensor, obs=None):
         # register parameters
-        loc_theta = pyro.param("loc_init_ideal", torch.zeros(self.n_legs, self.k_dim, device=self.device))
-        scale_theta = pyro.param("scale_init_ideal", torch.ones(self.n_legs, self.k_dim, device=self.device),
+        loc_theta = pyro.param("loc_init_ideal", lambda: torch.zeros(self.n_legs, self.k_dim, device=self.device).unsqueeze(-1))
+        scale_theta = pyro.param("scale_init_ideal", lambda: torch.ones(self.n_legs, self.k_dim, device=self.device).unsqueeze(-1),
                                  constraint=constraints.positive)
-        loc_sigma = pyro.param("loc_atten", torch.ones(self.n_legs, self.k_dim, device=device),
-                               constraint=constraints.positive)
-        scale_sigma = pyro.param("scale_atten", torch.ones(self.n_legs, self.k_dim, device=self.device),
+        # loc_tau = pyro.param("loc_atten", lambda: torch.zeros(self.n_legs, self.k_dim, device=device).unsqueeze(-1),
+        #                        constraint=constraints.positive)
+        scale_tau = pyro.param("scale_atten", lambda: torch.ones(self.n_legs, self.k_dim, device=self.device).unsqueeze(-1),
                                  constraint=constraints.positive)
-        loc_v = pyro.param("loc_disturb", torch.zeros(self.n_legs, self.k_dim, self.max_time, device=self.device))
-        scale_v = pyro.param("scale_disturb", torch.ones(self.n_legs, self.k_dim, self.max_time, device=self.device),
+        loc_v = pyro.param("loc_disturb", lambda: torch.zeros(self.n_legs, self.k_dim, self.max_time, device=self.device))
+        scale_v = pyro.param("scale_disturb", lambda: torch.ones(self.n_legs, self.k_dim, self.max_time, device=self.device),
                              constraint=constraints.positive)
-        loc_beta = pyro.param("loc_polarity", torch.zeros(self.n_votes, self.k_dim, device=self.device))
-        scale_beta = pyro.param("scale_polarity", 5.0 * torch.ones(self.n_votes, self.k_dim, device=self.device),
+        loc_beta = pyro.param("loc_polarity", lambda: torch.zeros(self.n_votes, self.k_dim, device=self.device).unsqueeze(-1))
+        scale_beta = pyro.param("scale_polarity", lambda: 5.0 * torch.ones(self.n_votes, self.k_dim, device=self.device).unsqueeze(-1),
                                 constraint=constraints.positive)
-        loc_alpha = pyro.param("loc_popularity", torch.zeros(self.n_votes, 1, device=self.device))
-        scale_alpha = pyro.param("scale_popularity", 5.0 * torch.ones(self.n_votes, 1, device=self.device),
+        loc_alpha = pyro.param("loc_popularity", lambda: torch.zeros(self.n_votes, 1, device=self.device).unsqueeze(-1))
+        scale_alpha = pyro.param("scale_popularity", lambda: 5.0 * torch.ones(self.n_votes, 1, device=self.device).unsqueeze(-1),
                                  constraint=constraints.positive)
 
-        with pyro.plate('thetas', n_legs, dim=-2, device=self.device):
+        leg_plate = pyro.plate('legs', self.n_legs, dim=-3, device=self.device)
+        vote_plate = pyro.plate('votes', self.n_votes, dim=-3, device=self.device)
+        dim_plate = pyro.plate('dim', self.k_dim, dim=-2, device=self.device)
+        time_plate = pyro.plate('time', self.max_time, dim=-1, device=self.device)
+
+        with leg_plate, dim_plate:
             pyro.sample('theta', dist.Normal(loc_theta, scale_theta))
-        with pyro.plate('sigmas', n_legs, dim=-2, device=self.device):
-            pyro.sample('sigma', dist.Gamma(loc_sigma, scale_sigma))
-        with pyro.plate('vs', n_legs, dim=-3, device=self.device):
-            pyro.sample('v', dist.Normal(loc_v, scale_v))
-        with pyro.plate('betas', n_votes, dim=-2, device=self.device):
+            pyro.sample('tau', dist.HalfNormal(scale_tau))
+
+        if self.disturb_mask is not None:
+            with leg_plate, dim_plate, time_plate:
+                with poutine.mask(mask=self.disturb_mask):
+                    pyro.sample('v', dist.Normal(loc_v, scale_v))
+        else:
+            with leg_plate, dim_plate, time_plate:
+                pyro.sample('v', dist.Normal(loc_v, scale_v))
+
+        with vote_plate, dim_plate:
             pyro.sample('beta', dist.Normal(loc_beta, scale_beta))
-        with pyro.plate('alphas', n_votes, dim=-2, device=self.device):
+
+        with vote_plate:
             pyro.sample('alpha', dist.Normal(loc_alpha, scale_alpha))
 
     def fit(self, legs, votes, ind_time_tensor, responses):
@@ -439,31 +463,39 @@ class bayes_dynamic:
             # guide = bayes_irt_dynamic(legs, n_legs, votes, n_votes, ind_time_tensor, max_time, k_dim=1, device=None)
         pyro.clear_param_store()
         if self.guide_type == "auto":
-            pyro.get_param_store().setdefault("AutoNormal.locs.sigma", init_constrained_value=1.0 * torch.ones(self.n_legs, self.k_dim), constraint=constraints.positive)
-            pyro.get_param_store().setdefault("AutoNormal.locs.theta", init_constrained_value=self.custom_init_values)
-            pyro.get_param_store().setdefault("AutoNormal.locs.v", init_constrained_value=torch.zeros(self.n_legs, self.k_dim, self.max_time))
+            pyro.get_param_store().get_param("AutoNormal.locs.theta", init_tensor=self.custom_init_values)
+            pyro.get_param_store().get_param("AutoNormal.scales.theta", init_tensor=torch.ones(self.n_legs, self.k_dim, device=self.device).unsqueeze(-1), constraint=constraints.positive)
+            pyro.get_param_store().get_param("AutoNormal.locs.tau", init_tensor=0.1 * torch.ones(self.n_legs, self.k_dim, device=self.device).unsqueeze(-1), constraint=constraints.positive)
+            pyro.get_param_store().get_param("AutoNormal.scales.tau", init_tensor=0.1 * torch.ones(self.n_legs, self.k_dim, device=self.device).unsqueeze(-1), constraint=constraints.positive)
+            pyro.get_param_store().get_param("AutoNormal.locs.v", init_tensor=torch.zeros(self.n_legs, self.k_dim, self.max_time, device=self.device))
+            pyro.get_param_store().get_param("AutoNormal.scales.v", init_tensor=torch.ones(self.n_legs, self.k_dim, self.max_time, device=self.device), constraint=constraints.interval(1e-7, 1e7))
+            pyro.get_param_store().get_param("AutoNormal.locs.beta", init_tensor=torch.zeros(self.n_votes, self.k_dim, device=self.device).unsqueeze(-1))
+            pyro.get_param_store().get_param("AutoNormal.scales.beta", init_tensor=torch.ones(self.n_votes, self.k_dim, device=self.device).unsqueeze(-1), constraint=constraints.positive)
+            pyro.get_param_store().get_param("AutoNormal.locs.alpha", init_tensor=torch.zeros(self.n_votes, 1, device=self.device).unsqueeze(-1))
+            pyro.get_param_store().get_param("AutoNormal.scales.alpha", init_tensor=torch.ones(self.n_votes, 1, device=self.device).unsqueeze(-1), constraint=constraints.positive)
         elif self.guide_type == "basic":
-            pyro.get_param_store().setdefault("loc_init_ideal", init_constrained_value=self.custom_init_values)
-            pyro.get_param_store().setdefault("scale_init_ideal", init_constrained_value=torch.ones(self.n_legs, self.k_dim), constraint=constraints.positive)
-            pyro.get_param_store().setdefault("loc_atten", init_constrained_value=0.01 * torch.ones(self.n_legs, self.k_dim), constraint=constraints.positive)
-            pyro.get_param_store().setdefault("scale_atten", init_constrained_value=0.01 * torch.ones(self.n_legs, self.k_dim), constraint=constraints.positive)
-            pyro.get_param_store().setdefault("loc_disturb", init_constrained_value=torch.zeros(self.n_legs, self.k_dim, self.max_time))
-            pyro.get_param_store().setdefault("scale_disturb", init_constrained_value=torch.ones(self.n_legs, self.k_dim, self.max_time), constraint=constraints.positive)
-            pyro.get_param_store().setdefault("loc_beta", init_constrained_value=torch.zeros(self.n_votes, self.k_dim, device=self.device))
-            pyro.get_param_store().setdefault("scale_beta", init_constrained_value=5.0 * torch.ones(self.n_votes, self.k_dim, device=self.device), constraint=constraints.positive)
-            pyro.get_param_store().setdefault("loc_beta", init_constrained_value=torch.zeros(self.n_votes, 1, device=self.device))
-            pyro.get_param_store().setdefault("scale_beta", init_constrained_value=5.0 * torch.ones(self.n_votes, 1, device=self.device), constraint=constraints.positive)
+            pyro.get_param_store().get_param("loc_init_ideal", init_tensor=self.custom_init_values)
+            # pyro.get_param_store().get_param("scale_init_ideal", init_tensor=torch.ones(self.n_legs, self.k_dim, device=self.device).unsqueeze(-1), constraint=constraints.positive)
+            # pyro.get_param_store().get_param("loc_atten", init_tensor=0.1 * torch.ones(self.n_legs, self.k_dim, device=self.device).unsqueeze(-1), constraint=constraints.positive)
+            pyro.get_param_store().get_param("scale_atten", init_tensor=torch.ones(self.n_legs, self.k_dim, device=self.device).unsqueeze(-1), constraint=constraints.positive)
+            # pyro.get_param_store().get_param("loc_disturb", init_tensor=torch.zeros(self.n_legs, self.k_dim, self.max_time, device=self.device))
+            # pyro.get_param_store().get_param("scale_disturb", init_tensor=torch.ones(self.n_legs, self.k_dim, self.max_time, device=self.device), constraint=constraints.positive)
+            # pyro.get_param_store().get_param("loc_polarity", init_tensor=torch.zeros(self.n_votes, self.k_dim, device=self.device).unsqueeze(-1))
+            # pyro.get_param_store().get_param("scale_polarity", init_tensor=5.0 * torch.ones(self.n_votes, self.k_dim, device=self.device).unsqueeze(-1), constraint=constraints.positive)
+            # pyro.get_param_store().get_param("loc_popularity", init_tensor=torch.zeros(self.n_votes, 1, device=self.device).unsqueeze(-1))
+            # pyro.get_param_store().get_param("scale_popularity", init_tensor=5.0 * torch.ones(self.n_votes, 1, device=self.device).unsqueeze(-1), constraint=constraints.positive)
 
         logger.info("Run the variational inference")
         # Setup the variational inference
-        optim = Adam({'lr': 0.1})
+        optim = Adam({'lr': 0.05})
         svi = custom_SVI(self.model, guide, optim, loss=Trace_ELBO(), l2_penalty=0.0)
+        self.guide_used = guide
 
         min_loss = float('inf')  # initialize to infinity
         patience = 0
-        for j in tqdm(range(5000)):
-            # loss = svi.step(legs, votes, ind_time_tensor, responses)
-            loss = svi.penalized_step(legs, votes, ind_time_tensor, responses)
+        for j in tqdm(range(15000), ncols=100, mininterval=1):
+            loss = svi.step(legs, votes, ind_time_tensor, responses)
+            # loss = svi.penalized_step(legs, votes, ind_time_tensor, responses)
 
             if j % 100 == 0:
                 logger.info("[epoch %04d] loss: %.4f" % (j + 1, loss))
@@ -478,22 +510,224 @@ class bayes_dynamic:
 
 
 pyro.clear_param_store()
-test = bayes_dynamic(n_legs, n_votes, max_time, k_dim=k_dim, guide_type="basic", custom_init_values=custom_init_values, device=device)
+test = bayes_dynamic(n_legs, n_votes, max_time, k_dim=k_dim, guide_type="basic", custom_init_values=custom_init_values.unsqueeze(-1), disturb_mask=disturb_mask, device=device)
 test.fit(legs, votes, ind_time_tensor, responses)
-
-posterior_predictive = pyro.infer.predictive.Predictive(model=test.model, guide=test.guide_basic, num_samples=1, return_sites=["obs", "ideal_point"])
 
 preds = torch.zeros(size=responses.shape, device=device)
 preds_test = torch.zeros(size=responses_test.shape, device=device)
 ideal_point_list = []
 n_samples = 1000
 for _ in tqdm(range(n_samples)):
-    guide_trace = pyro.poutine.trace(test.guide_basic).get_trace(legs, votes, ind_time_tensor)
+    guide_trace = pyro.poutine.trace(test.guide_used).get_trace(legs, votes, ind_time_tensor)
+    posterior_predictive = pyro.poutine.trace(pyro.poutine.replay(test.model, guide_trace)).get_trace(legs, votes, ind_time_tensor)
+    preds += posterior_predictive.nodes['obs']['value'].squeeze()
+    # print(posterior_predictive.nodes["v"]['value'].squeeze())
+    # ideal_point_list += [posterior_predictive.nodes["ideal_point"]['value'].squeeze()]
+
+    guide_trace = pyro.poutine.trace(test.guide_used).get_trace(legs_test, votes_test, ind_time_tensor_test)
+    posterior_predictive = pyro.poutine.trace(pyro.poutine.replay(test.model, guide_trace)).get_trace(legs_test, votes_test, ind_time_tensor_test)
+    preds_test += posterior_predictive.nodes['obs']['value'].squeeze()
+preds = preds / n_samples
+preds_test = preds_test / n_samples
+
+
+criterion = torch.nn.BCELoss(reduction="mean")
+log_like = torch.nn.BCELoss(reduction="sum")
+k = 0
+for param_name, param_value in pyro.get_param_store().items():
+    if "locs" in param_name:
+        k += np.array(param_value.shape).prod()
+
+# Calculate log loss and accuracy scores, in sample
+train_metrics = {"bce": criterion(preds, responses).item(),
+                 "log_like": log_like(preds, responses).item(),
+                 "accuracy": (1.0 * (responses == preds.round())).mean().item(),
+                }
+logger.info(f'Train loss (VB): {train_metrics["bce"]}')
+logger.info(f'Train accuracy (VB): {train_metrics["accuracy"]}')
+
+# Calculate log loss and accuracy scores, out of sample
+test_metrics = {"bce": criterion(preds_test, responses_test).item(),
+                "log_like": log_like(preds_test, responses_test).item(),
+                "accuracy": (1.0 * (responses_test == preds_test.round())).mean().item(),
+                }
+logger.info(f'Test loss (VB): {test_metrics["bce"]}')
+logger.info(f'Test accuracy (VB): {test_metrics["accuracy"]}')
+
+train_metrics = {'train_' + k: v for k, v, in train_metrics.items()}
+test_metrics = {'test_' + k: v for k, v, in test_metrics.items()}
+
+metrics = {**train_metrics, **test_metrics}
+
+metrics["train_n"] = responses.shape[0]
+metrics["train_k"] = k
+metrics["train_aic"] = ((2 * k) - (2 * -1 * metrics["train_log_like"]))
+metrics["train_bic"] = k * np.log(metrics["train_n"]) - (2 * -1 * metrics["train_log_like"])
+
+metrics["test_n"] = responses_test.shape[0]
+metrics["test_k"] = k
+metrics["test_aic"] = ((2 * k) - (2 * -1 * metrics["test_log_like"]))
+metrics["test_bic"] = k * np.log(metrics["test_n"]) - (2 * -1 * metrics["test_log_like"])
+
+final_metrics = {**data_params, **metrics}
+final_metrics
+
+
+logger.info("Now fit the model using sampling")
+# Initialize the MCMC to our estimates from the variational model
+# Speeds things up and requires less burn-in
+if test.guide_type == "auto":
+    if covariates_list:
+        init_values = init_to_value(values={"theta": pyro.param("AutoNormal.locs.theta").data,
+                                            "beta": pyro.param("AutoNormal.locs.beta").data,
+                                            "alpha": pyro.param("AutoNormal.locs.alpha").data,
+                                            "tau": pyro.param("AutoNormal.locs.tau").data,
+                                            "v": pyro.param("AutoNormal.locs.v").data * disturb_mask,
+                                            "coef": pyro.param("AutoNormal.locs.coef").data,
+                                            })
+    else:
+        init_values = init_to_value(values={"theta": pyro.param("AutoNormal.locs.theta").data,
+                                            "beta": pyro.param("AutoNormal.locs.beta").data,
+                                            "alpha": pyro.param("AutoNormal.locs.alpha").data,
+                                            "tau": pyro.param("AutoNormal.locs.tau").data,
+                                            "v": pyro.param("AutoNormal.locs.v").data * disturb_mask,
+                                            })
+elif test.guide_type == "basic":
+    if covariates_list:
+        init_values = init_to_value(values={"theta": pyro.param("loc_init_ideal").data,
+                                            "beta": pyro.param("loc_polarity").data,
+                                            "alpha": pyro.param("loc_popularity").data,
+                                            "tau": pyro.param("scale_atten").data,
+                                            "v": pyro.param("loc_disturb").data * disturb_mask,
+                                            "coef": pyro.param("AutoNormal.locs.coef").data,
+                                            })
+    else:
+        init_values = init_to_value(values={"theta": pyro.param("loc_init_ideal").data,
+                                            "beta": pyro.param("loc_polarity").data,
+                                            "alpha": pyro.param("loc_popularity").data,
+                                            "tau": pyro.param("scale_atten").data,
+                                            "v": pyro.param("loc_disturb").data * disturb_mask,
+                                            })
+
+# Set up sampling alrgorithm
+# kernel = HMC(test.model, adapt_step_size=True, target_accept_prob=0.85, step_size=1e-4, num_steps=25, jit_compile=False, ignore_jit_warnings=True, init_strategy=init_values)
+kernel = NUTS(test.model, step_size=1e-4, adapt_step_size=True, max_tree_depth=7, target_accept_prob=0.85, jit_compile=False, ignore_jit_warnings=True, use_multinomial_sampling=False)
+# For real inference should probably increase the number of samples, but this is part is slow and enough to test
+hmc_posterior = MCMC(kernel, num_samples=250, warmup_steps=50, disable_validation=False)
+# Run the model
+hmc_posterior.run(legs, votes, ind_time_tensor, obs=responses)
+
+# # Save the posterior
+# hmc_posterior.sampler = None
+# hmc_posterior.kernel.potential_fn = None
+# with open(US_PATH + f'bayes/params_mcmc_{k_dim}_{k_time}_{"".join(covariates_list)}.pkl', 'wb') as f:
+#     pickle.dump(hmc_posterior, f)
+# # with open(US_PATH + f'bayes/params_mcmc_{k_dim}_{k_time}_{"".join(covariates_list)}.pkl', 'rb') as f:
+# #     hmc_posterior = pickle.load(f)
+
+
+
+
+
+# Declare context managers, implies conditional independence across the specified dimension
+# 3 Dimensions: legislator/vote/observation, ideology dimension, time dimension
+leg_plate = pyro.plate('legs', n_legs, dim=-3, device=device)
+vote_plate = pyro.plate('votes', n_votes, dim=-3, device=device)
+dim_plate = pyro.plate('dim', k_dim, dim=-2, device=device)
+time_plate = pyro.plate('time', max_time, dim=-1, device=device)
+
+with leg_plate, dim_plate:
+    init_ideal_point = pyro.sample('theta', dist.Normal(0, 1))
+    atten = pyro.sample('tau', dist.Gamma(1, 1))
+
+with leg_plate, dim_plate, time_plate:
+    with poutine.mask(mask=disturb_mask):
+        disturb = pyro.sample('v', dist.Normal(0, 1))
+
+with vote_plate, dim_plate:
+    polarity = pyro.sample('beta', dist.Normal(0, 5))
+
+with vote_plate:
+    popularity = pyro.sample('alpha', dist.Normal(0, 5))
+
+# temp_ideal = init_ideal_point.unsqueeze(-1)
+# print(temp_ideal.shape)
+# print(atten.shape)
+# print(disturb.shape)
+# all_temp_ideal = init_ideal_point + (atten * disturb).cumsum(dim=2)
+# all_temp_ideal.shape
+# print(all_temp_ideal.shape)
+
+ideal_point = pyro.deterministic("ideal_point", torch.cat([init_ideal_point, init_ideal_point + (atten * disturb).cumsum(dim=2)], dim=2))
+ideal_point.shape
+
+batch_ideal = ideal_point[legs, :, ind_time_tensor]
+polarity_batch = polarity[votes]
+popularity_batch = popularity[votes]
+
+batch_ideal.shape
+polarity_batch.shape
+popularity_batch.shape
+
+torch.sum(batch_ideal * polarity_batch.squeeze(), dim=-1).shape
+popularity_batch.squeeze().shape
+
+# Combine parameters
+logit = torch.sum(batch_ideal * polarity_batch.squeeze(), dim=-1) + popularity_batch.squeeze()
+
+obs = responses
+obs.shape
+
+if obs is not None:
+    # If training outcomes are provided, run the sampling statement for the given data
+    with pyro.plate('observe_data', obs.size(0), device=device):
+        pyro.sample("obs", dist.Bernoulli(logits=logit), obs=obs)
+else:
+    # If no training outcomes are provided, return the samples from the predicted distributions
+    with pyro.plate('observe_data', legs.size(0), device=self.device):
+        obs = pyro.sample("obs", dist.Bernoulli(logits=logit))
+    return obs
+
+
+
+
+init_ideal_point = pyro.sample('theta', dist.Normal(torch.zeros(k_dim, device=device), torch.ones(k_dim, device=device)))
+
+with pyro.plate('sigmas', n_legs, dim=-2, device=device):
+    # atten = pyro.sample('sigma', dist.Exponential(1.0 * torch.ones(k_dim, device=device)))
+    # atten = pyro.sample('sigma', dist.Normal(torch.zeros(k_dim, device=device), torch.ones(k_dim, device=device)))
+    atten = pyro.sample('sigma', dist.Gamma(torch.ones(k_dim, device=device), torch.ones(k_dim, device=device)))
+
+with pyro.plate('vs', n_legs, dim=-3, device=device):
+    disturb = pyro.sample('v', dist.Normal(torch.zeros(k_dim, max_time, device=device), torch.ones(k_dim, max_time, device=device)))
+
+with pyro.plate('betas', n_votes, dim=-2,  device=device):
+    polarity = pyro.sample('beta', dist.Normal(torch.zeros(k_dim, device=device), 5.0 * torch.ones(k_dim, device=device)))
+
+with pyro.plate('alphas', n_votes, dim=-2, device=device):
+    popularity = pyro.sample('alpha', dist.Normal(torch.zeros(1, device=device), 5.0 * torch.ones(1, device=device)))
+
+
+
+pyro.clear_param_store()
+test = bayes_dynamic(n_legs, n_votes, max_time, k_dim=k_dim, guide_type="auto", custom_init_values=custom_init_values, device=device)
+test.fit(legs, votes, ind_time_tensor, responses)
+pyro.get_param_store().keys()
+
+posterior_predictive = pyro.infer.predictive.Predictive(model=test.model, guide=test.guide_used, num_samples=1, return_sites=["obs", "ideal_point"])
+# autoguides.AutoNormal(self.model)
+
+preds = torch.zeros(size=responses.shape, device=device)
+preds_test = torch.zeros(size=responses_test.shape, device=device)
+ideal_point_list = []
+n_samples = 1000
+for _ in tqdm(range(n_samples)):
+    guide_trace = pyro.poutine.trace(test.guide_used).get_trace(legs, votes, ind_time_tensor)
     posterior_predictive = pyro.poutine.trace(pyro.poutine.replay(test.model, guide_trace)).get_trace(legs, votes, ind_time_tensor)
     preds += posterior_predictive.nodes['obs']['value'].squeeze()
     ideal_point_list += [posterior_predictive.nodes["ideal_point"]['value'].squeeze()]
 
-    guide_trace = pyro.poutine.trace(test.guide_basic).get_trace(legs_test, votes_test, ind_time_tensor_test)
+    guide_trace = pyro.poutine.trace(test.guide_used).get_trace(legs_test, votes_test, ind_time_tensor_test)
     posterior_predictive = pyro.poutine.trace(pyro.poutine.replay(test.model, guide_trace)).get_trace(legs_test, votes_test, ind_time_tensor_test)
     preds_test += posterior_predictive.nodes['obs']['value'].squeeze()
 preds = preds / n_samples
@@ -552,13 +786,23 @@ pyro.get_param_store()["loc_disturb"]
 # pyro.get_param_store().named_parameters()
 
 indices = (torch.arange(start=0, end=max_time + 1).repeat(n_legs, 1))
-mask = indices.le(sessions_served.unsqueeze(-1))
-mask * posterior_predictive.nodes['ideal_point']['value'].squeeze()
+indices.le(sessions_served.unsqueeze(-1)).shape
+mask = indices.le(sessions_served.unsqueeze(-1)).unsqueeze(1)
+mask.shape
+(mask * posterior_predictive.nodes['ideal_point']['value']).shape
 
-torch.stack(ideal_point_list, dim=-1).mean(axis=2)
-torch.stack(ideal_point_list, dim=-1).mean(axis=2) * mask
-torch.stack(ideal_point_list, dim=-1).std(axis=2) * mask
-ideal_df = pd.DataFrame((torch.stack(ideal_point_list, dim=-1).mean(axis=2) * mask).detach().numpy())
+torch.stack(ideal_point_list, dim=-1).mean(axis=-1).shape
+(torch.stack(ideal_point_list, dim=-1).mean(axis=-1) * mask).shape
+torch.stack(ideal_point_list, dim=-1).std(axis=-1) * mask
+temp_ideals = torch.stack(ideal_point_list, dim=-1).mean(axis=-1) * mask
+ideal_df_list = []
+for i in range(k_dim):
+    temp_df = pd.DataFrame(temp_ideals[:, i, :].detach().numpy())
+    temp_df.index.name = "leg_id"
+    temp_df.columns.name = "time_index"
+    temp_df = temp_df.replace({0.0: np.nan}).stack().dropna().to_frame("dim_" + str(i))
+    ideal_df_list += [temp_df]
+ideal_df = pd.concat(ideal_df_list, axis=1)
 
 leg_data = pd.read_feather(DATA_PATH + "leg_data.feather")
 
@@ -567,935 +811,466 @@ leg_data = pd.read_feather(DATA_PATH + "leg_data.feather")
 
 leg_crosswalk_rev = {v: k for k, v in vote_data["leg_crosswalk"].items()}
 
-leg_data[leg_data["bioname"].str.contains("FLAKE")]
-leg_data[leg_data["bioname"].str.contains("McCAIN")]
-leg_data[leg_data["bioname"].str.contains("GILLIBRAND")]
+# leg_data[leg_data["bioname"].str.contains("FLAKE")]
+# leg_data[leg_data["bioname"].str.contains("McCAIN")]
+# leg_data[leg_data["bioname"].str.contains("GILLIBRAND")]
+# leg_data[leg_data["bioname"].str.contains("SANDERS")]
+# leg_data[leg_data["bioname"].str.contains("HATCH")]
+# leg_data[leg_data["bioname"].str.contains("BIDEN")]
 
 ideal_df.loc[leg_crosswalk_rev[20100]]
 ideal_df.loc[leg_crosswalk_rev[15039]]
 ideal_df.loc[leg_crosswalk_rev[20735]]
-
-# Define metrics
-criterion = torch.nn.BCELoss(reduction="mean")
-log_like = torch.nn.BCELoss(reduction="sum")
-k = 0
-for param_name, param_value in pyro.get_param_store().items():
-    if "locs" in param_name:
-        k += np.array(param_value.shape).prod()
-
-# Calculate log loss and accuracy scores, in sample
-train_metrics = {"bce": criterion(preds, responses).item(),
-                 "log_like": log_like(preds, responses).item(),
-                 "accuracy": (1.0 * (responses == preds.round())).mean().item(),
-                }
-logger.info(f'Train loss (VB): {train_metrics["bce"]}')
-logger.info(f'Train accuracy (VB): {train_metrics["accuracy"]}')
-
-# Calculate log loss and accuracy scores, out of sample
-test_metrics = {"bce": criterion(preds_test, responses_test).item(),
-                "log_like": log_like(preds_test, responses_test).item(),
-                "accuracy": (1.0 * (responses_test == preds_test.round())).mean().item(),
-                }
-logger.info(f'Test loss (VB): {test_metrics["bce"]}')
-logger.info(f'Test accuracy (VB): {test_metrics["accuracy"]}')
-
-train_metrics = {'train_' + k: v for k, v, in train_metrics.items()}
-test_metrics = {'test_' + k: v for k, v, in test_metrics.items()}
-
-metrics = {**train_metrics, **test_metrics}
-
-metrics["train_n"] = responses.shape[0]
-metrics["train_k"] = k
-metrics["train_aic"] = ((2 * k) - (2 * -1 * metrics["train_log_like"]))
-metrics["train_bic"] = k * np.log(metrics["train_n"]) - (2 * -1 * metrics["train_log_like"])
-
-metrics["test_n"] = responses_test.shape[0]
-metrics["test_k"] = k
-metrics["test_aic"] = ((2 * k) - (2 * -1 * metrics["test_log_like"]))
-metrics["test_bic"] = k * np.log(metrics["test_n"]) - (2 * -1 * metrics["test_log_like"])
-
-final_metrics = {**data_params, **metrics}
-final_metrics
+ideal_df.loc[leg_crosswalk_rev[29147]]
+ideal_df.loc[leg_crosswalk_rev[14503]]
+ideal_df.loc[leg_crosswalk_rev[14101]]
 
 
-n_samples = 100
-preds = torch.zeros(size=responses.shape, device=device)
-preds_test = torch.zeros(size=responses_test.shape, device=device)
-ideal_point_list = []
-for _ in tqdm(range(n_samples)):
-    in_sample_predictive = posterior_predictive(legs, votes, ind_time_tensor)
-    preds += in_sample_predictive["obs"].squeeze()
-    ideal_point_list += [in_sample_predictive["ideal_point"].squeeze()]
-    preds_test += posterior_predictive(legs_test, votes_test, ind_time_tensor_test)["obs"].squeeze()
-preds = preds / n_samples
-preds_test = preds_test / n_samples
+d = pyro.distributions.Bernoulli(torch.tensor([0.1, 0.2, 0.3, 0.4])).expand([3, 4])
+assert d.batch_shape == (3, 4)
+assert d.event_shape == ()
+x = d.sample()
+assert x.shape == (3, 4)
+assert d.log_prob(x).shape == (3, 4)
 
-ideal_point_list[10]
-torch.stack(ideal_point_list, dim=-1).mean(axis=2) * mask
-ideal_point * mask
-torch.stack(ideal_point_list, dim=-1).std(axis=2) * masktest
+type(x)
+x.expand_by()
 
 
+def is_prng_key(key):
+    try:
+        return key.shape == (2,) and key.dtype == np.uint32
+    except AttributeError:
+        return False
 
 
+def validate_sample(log_prob_fn):
+    def wrapper(self, *args, **kwargs):
+        log_prob = log_prob_fn(self, *args, *kwargs)
+        if self._validate_args:
+            value = kwargs['value'] if 'value' in kwargs else args[0]
+            mask = self._validate_sample(value)
+            log_prob = torch.where(mask, log_prob, -torch.inf)
+        return log_prob
+
+    return wrapper
 
 
-def bayes_irt_dynamic(legs, n_legs, votes, n_votes, ind_time_tensor, max_time, y=None, k_dim=1, device=None):
-    """Define a core ideal point model
-
-    Args:
-        legs: a tensor of legislator ids
-        votes: a tensor of vote ids
-        y: a tensor of vote choices
-        k_dim: desired dimensions of the models
-    """
-    # Set up parameter plates for all of the parameters
-    # with pyro.plate('thetas', n_legs, dim=-2, device=device):
-    #     ideal_point = pyro.sample('theta', dist.Normal(torch.zeros(k_dim, device=device), torch.ones(k_dim, device=device)))
-    # ideal_point_dict = {i.item(): random_walk(i.item(), sessions_served[i] + 1) for i in legs.unique()}
-    # nn = 0
-    # n = len(legs)
-    # ideal_point = torch.empty(n, 1)
-    # for nn in range(n):
-    #     temp_ideal = ideal_point_dict[legs[nn].item()]
-    #     ideal_point[nn] = temp_ideal[ind_time_tensor[nn].item()]
-
-    with pyro.plate('thetas', n_legs, dim=-2, device=device):
-        init_ideal_point = pyro.sample('theta', dist.Normal(torch.zeros(k_dim, device=device), torch.ones(k_dim, device=device)))
-
-    with pyro.plate('sigmas', n_legs, dim=-2, device=device):
-        atten = pyro.sample('sigma', dist.Exponential(1.0 * torch.ones(k_dim, device=device)))
-        # atten = pyro.sample('sigma', dist.Normal(torch.zeros(k_dim, device=device), torch.ones(k_dim, device=device)))
-
-    with pyro.plate('vs', n_legs, dim=-3, device=device):
-        disturb = pyro.sample('v', dist.Normal(torch.zeros(k_dim, max_time, device=device), torch.ones(k_dim, max_time, device=device)))
-
-    with pyro.plate('betas', n_votes, dim=-2,  device=device):
-        polarity = pyro.sample('beta', dist.Normal(torch.zeros(k_dim, device=device), 5.0 * torch.ones(k_dim, device=device)))
-
-    with pyro.plate('alphas', n_votes, dim=-2, device=device):
-        popularity = pyro.sample('alpha', dist.Normal(torch.zeros(1, device=device), 5.0 * torch.ones(1, device=device)))
-
-    atten.shape
-    disturb.shape
-    (atten.unsqueeze(-1) * disturb).shape
-    ideal_point = pyro.deterministic("ideal_point", torch.hstack([init_ideal_point, init_ideal_point + (atten.unsqueeze(-1) * disturb).squeeze().cumsum(dim=-1)]))
-    # later_ideal_point = init_ideal_point + (atten * disturb).squeeze().cumsum(dim=-1)
-    # ideal_point = torch.hstack([init_ideal_point, later_ideal_point])
-
-    batch_ideal = ideal_point[legs, ind_time_tensor].unsqueeze(-1)
-    polarity_batch = polarity[votes]
-    popularity_batch = popularity[votes]
-
-    # Combine parameters
-    logit = torch.sum(batch_ideal * polarity_batch, dim=-1) + popularity_batch.squeeze()
-
-    if y is not None:
-        # If training outcomes are provided, run the sampling statement for the given data
-        with pyro.plate('observe_data', y.size(0), device=device):
-            pyro.sample("obs", dist.Bernoulli(logits=logit), obs=y)
-    else:
-        # If no training outcomes are provided, return the samples from the predicted distributions
-        with pyro.plate('observe_data', legs.size(0), device=device):
-            y = pyro.sample("obs", dist.Bernoulli(logits=logit))
-        return y
+from pyro.distributions.distribution import Distribution
+from pyro.distributions import Normal
+import torch.random as random
 
 
-def guide_irt_dynamic(legs, n_legs, votes, n_votes, ind_time_tensor, max_time, y=None, k_dim=1, device=None):
-    # register parameters
-    loc_theta = pyro.param("loc_init_ideal", torch.zeros(k_dim, device=device))
-    scale_theta = pyro.param("scale_init_ideal", torch.ones(k_dim, device=device),
-                             constraint=constraints.positive)
-    # loc_sigma = pyro.param("loc_atten", torch.zeros(k_dim, device=device))
-    scale_sigma = pyro.param("scale_atten", torch.ones(k_dim, device=device),
-                             constraint=constraints.positive)
-    loc_v = pyro.param("loc_disturb", torch.zeros(k_dim, max_time, device=device))
-    scale_v = pyro.param("scale_disturb", torch.ones(k_dim, max_time, device=device),
-                         constraint=constraints.positive)
-    loc_beta = pyro.param("loc_polarity", torch.zeros(k_dim, device=device))
-    scale_beta = pyro.param("scale_polarity", 5 * torch.ones(k_dim, device=device),
-                            constraint=constraints.positive)
-    loc_alpha = pyro.param("loc_popularity", torch.zeros(1, device=device))
-    scale_alpha = pyro.param("scale_popularity", 5 * torch.ones(1, device=device),
-                             constraint=constraints.positive)
+class GaussianRandomWalk(dist.TorchDistribution):
+    arg_constraints = {'scale': constraints.positive}
+    support = constraints.real_vector
+    reparametrized_params = ['scale']
 
-    with pyro.plate('thetas', n_legs, dim=-2, device=device):
-        pyro.sample('theta', dist.Normal(loc_theta, scale_theta))
-    with pyro.plate('sigmas', n_legs, dim=-2, device=device):
-        pyro.sample('sigma', dist.Exponential(scale_sigma))
-    with pyro.plate('vs', n_legs, dim=-3, device=device):
-        pyro.sample('v', dist.Normal(loc_v, scale_v))
-    with pyro.plate('betas', n_votes, dim=-2, device=device):
-        pyro.sample('beta', dist.Normal(loc_beta, scale_beta))
-    with pyro.plate('alphas', n_votes, dim=-2, device=device):
-        pyro.sample('alpha', dist.Normal(loc_alpha, scale_alpha))
+    def __init__(self, scale=torch.ones(1), num_steps=1, validate_args=None):
+        assert isinstance(num_steps, int) and num_steps > 0, \
+            "`num_steps` argument should be an positive integer."
+        self.scale = scale
+        self.num_steps = num_steps
+        # self.batch_shape, self.event_shape = scale.shape, (num_steps,)
+        self.validate_args = validate_args
+        super(GaussianRandomWalk, self).__init__()
 
-pyro.clear_param_store()
+    def sample(self, sample_shape=()):
+        shape = sample_shape + self.batch_shape + self.event_shape
+        walks = torch.normal(mean=0, std=1, size=shape)
+        return torch.cumsum(walks, axis=-1) * self.scale.unsqueeze(-1)
 
+    # @validate_sample
+    def log_prob(self, value):
+        init_prob = Normal(0., self.scale).log_prob(value[..., 0])
+        scale = self.scale.unsqueeze(-1)
+        step_probs = Normal(value[..., :-1], scale).log_prob(value[..., 1:])
+        return init_prob + torch.sum(step_probs, axis=-1)
 
-logger.info("Test a model with covariates")
-logger.info("Setup the Bayesian Model")
-# Choose the optimizer used by the variational algorithm
-optim = Adam({'lr': 0.1, 'weight_decay': 0.00001})
+    @staticmethod
+    def infer_shapes(self):
+        return self.batch_shape, self.event_shape
 
-# Define the guide, intialize to the values returned from process data
-guide = autoguides.AutoNormal(bayes_irt_dynamic)
-# guide = guide_irt_dynamic(legs, n_legs, votes, n_votes, ind_time_tensor, max_time, y=responses, k_dim=1, device=None)
-# guide = bayes_irt_dynamic(legs, n_legs, votes, n_votes, ind_time_tensor, max_time, k_dim=1, device=None)
+    @property
+    def mean(self):
+        return torch.zeros(self.batch_shape + self.event_shape)
 
-# Setup the variational inference
-svi = SVI(bayes_irt_dynamic, guide, optim, loss=Trace_ELBO())
-# svi.step(legs, n_legs, votes, n_votes, ind_time_tensor, max_time, y=responses, k_dim=1, device=None)
+    @property
+    def variance(self):
+        return torch.broadcast_to(torch.expand(self.scale, -1) ** 2 * torch.arange(1, self.num_steps + 1),
+                                  self.batch_shape + self.event_shape)
 
-logger.info("Run the variational inference")
-pyro.clear_param_store()
-# pyro.get_param_store().setdefault("AutoNormal.locs.sigma", init_constrained_value=1.0 * torch.ones(n_legs, k_dim), constraint=constraints.positive)
-# pyro.get_param_store().setdefault("AutoNormal.locs.theta", init_constrained_value=custom_init_values)
-# pyro.get_param_store().setdefault("AutoNormal.locs.v", init_constrained_value=torch.zeros(n_legs, max_time))
+    def tree_flatten(self):
+        return (self.scale,), self.num_steps
 
-min_loss = float('inf')  # initialize to infinity
-patience = 0
-for j in tqdm(range(5000)):
-    loss = svi.step(legs, n_legs, votes, n_votes, ind_time_tensor, max_time, y=responses, k_dim=2, device=None)
-    # define optimizer and loss function
-    # optimizer = torch.optim.Adam(my_parameters, {"lr": 0.1})
-    # loss_fn = pyro.infer.Trace_ELBO().differentiable_loss
-    # compute loss
-    # loss = loss_fn(bayes_irt_dynamic, guide, legs, n_legs, votes, n_votes, ind_time_tensor, max_time, y=responses, k_dim=1, device=None)
-    # loss.backward()
-    # take a step and zero the parameter gradients
-    # optimizer.step()
-    # optimizer.zero_grad()
-    if j % 100 == 0:
-        logger.info("[epoch %04d] loss: %.4f" % (j + 1, loss))
-        min_loss = min(loss, min_loss)
-        if (loss > min_loss):
-            if patience >= 4:
-                break
-            else:
-                patience += 1
-        else:
-            patience = 0
+    @classmethod
+    def tree_unflatten(cls, aux_data, params):
+        return cls(*params, num_steps=aux_data)
+
+    def expand(self, batch_shape, _instance=None):
+        batch_shape = torch.Size(batch_shape)
+        new = self._get_checked_instance(GaussianRandomWalk, _instance)
+        new.scale = self.scale.expand(batch_shape)
+        new.num_steps = self.num_steps.expand(batch_shape)
+        return super(GaussianRandomWalk, self).expand(batch_shape, new)
 
 
+class GaussianRandomWalk(dist.TorchDistribution):
+    has_rsample = True
+    arg_constraints = {'scale': constraints.positive}
+    support = constraints.real
+
+    def __init__(self, scale, num_steps=1):
+        self.scale = scale
+        batch_shape, event_shape = scale.shape, torch.Size([num_steps])
+        super(GaussianRandomWalk, self).__init__(batch_shape, event_shape)
+
+    def rsample(self, sample_shape=torch.Size()):
+        shape = sample_shape + self.batch_shape + self.event_shape
+        walks = self.scale.new_empty(shape).normal_()
+        return walks.cumsum(-1) * self.scale.unsqueeze(-1)
+
+    def log_prob(self, x):
+        init_prob = dist.Normal(self.scale.new_tensor(0.), self.scale).log_prob(x[..., 0])
+        step_probs = dist.Normal(x[..., :-1], self.scale.unsqueeze(-1)).log_prob(x[..., 1:])
+        return init_prob + step_probs.sum(-1)
 
 
+temp_scale = torch.ones(3)
+temp_scale.shape
+asdf = GaussianRandomWalk(scale=temp_scale, num_steps=5)
+x = asdf.sample()
+x.shape
+init_prob = dist.Normal(asdf.scale.new_tensor(0.), asdf.scale).log_prob(x[..., 0])
+step_probs = dist.Normal(loc=x[..., :-1], scale=asdf.scale.unsqueeze(-1)).log_prob(x[..., 1:])
 
-# sparse_votes = torch.sparse.FloatTensor(torch.stack([legs, votes]), responses)
-# u, s, v = torch.svd_lowrank(sparse_votes, q=2)
-# u.shape
-# v.shape
-# s.shape
+asdf.event_shape
+asdf.batch_shape
+val = asdf.sample()
+asdf.log_prob(val)
 
-# ideal_point
+zxcv = Normal(torch.tensor([0.0, 0.0]).expand(2, 2), torch.tensor([1.0, 1.0]).expand(2, 2))
+val = zxcv.sample()
+zxcv.log_prob(val)
 
-# def random_walk(i, T):
-#     x_0 = pyro.sample(f'x_0_{i}', dist.Normal(0, 1)).unsqueeze(-1)
-#     sigma = pyro.sample(f'sigma_{i}', dist.LogNormal(0, 1)).unsqueeze(-1)
-#     v = pyro.sample(f'v_{i}', dist.Normal(0, 1).expand([T]).to_event(1))
-#     x = pyro.deterministic(f"x_{i}", x_0 + sigma * v.cumsum(dim=-1))
-#     return x
+leg_plate = pyro.plate('legs', n_legs, dim=-3, device=device)
+vote_plate = pyro.plate('votes', n_votes, dim=-3, device=device)
+dim_plate = pyro.plate('dim', k_dim, dim=-2, device=device)
+# time_plate = pyro.plate('time', max_time, dim=-1, device=device)
 
-# def model_vague(self, models, items, obs):
-#     with pyro.plate('thetas', self.num_models, device=self.device):
-#         ability = pyro.sample('theta', dist.Normal(torch.tensor(0., device=self.device), torch.tensor(1., device=self.device)))
-#
-#     with pyro.plate('bs', self.num_items, device=self.device):
-#         diff = pyro.sample('b', dist.Normal(torch.tensor(0., device=self.device), torch.tensor(1.e3, device=self.device)))
-#
-#     with pyro.plate('observe_data', obs.size(0), device=self.device):
-#         pyro.sample("obs", dist.Bernoulli(logits=ability[models] - diff[items]), obs=obs)
-#
-# def guide_vague(self, models, items, obs):
-#     # register learnable params in the param store
-#     m_theta_param = pyro.param("loc_ability", torch.zeros(self.num_models, device=self.device))
-#     s_theta_param = pyro.param("scale_ability", torch.ones(self.num_models, device=self.device),
-#                                constraint=constraints.positive)
-#     m_b_param = pyro.param("loc_diff", torch.zeros(self.num_items, device=self.device))
-#     s_b_param = pyro.param("scale_diff", torch.empty(self.num_items, device=self.device).fill_(1.e3),
-#                            constraint=constraints.positive)
-#
-#     # guide distributions
-#     with pyro.plate('thetas', self.num_models, device=self.device):
-#         dist_theta = dist.Normal(m_theta_param, s_theta_param)
-#         pyro.sample('theta', dist_theta)
-#     with pyro.plate('bs', self.num_items, device=self.device):
-#         dist_b = dist.Normal(m_b_param, s_b_param)
-#         pyro.sample('b', dist_b)
+with leg_plate, dim_plate:
+    init_ideal_point = pyro.sample('theta', dist.Normal(0, 1))
+    atten = pyro.sample('tau', dist.Gamma(1, 1))
 
+with poutine.mask(mask=disturb_mask):
+    disturb = pyro.sample('v', GaussianRandomWalk(scale=atten.squeeze(), num_steps=max_time.item()))
+disturb.shape
 
-# def is_prng_key(key):
-#     try:
-#         return key.shape == (2,) and key.dtype == np.uint32
-#     except AttributeError:
-#         return False
-#
-#
-# def validate_sample(log_prob_fn):
-#     def wrapper(self, *args, **kwargs):
-#         log_prob = log_prob_fn(self, *args, *kwargs)
-#         if self._validate_args:
-#             value = kwargs['value'] if 'value' in kwargs else args[0]
-#             mask = self._validate_sample(value)
-#             log_prob = torch.where(mask, log_prob, -torch.inf)
-#         return log_prob
-#
-#     return wrapper
-#
-#
-# class GaussianRandomWalk(torch.distributions.Distribution):
-#     arg_constraints = {'scale': constraints.positive}
-#     support = constraints.real_vector
-#     reparametrized_params = ['scale']
-#
-#     def __init__(self, scale=1., num_steps=1, validate_args=None):
-#         assert isinstance(num_steps, int) and num_steps > 0, \
-#             "`num_steps` argument should be an positive integer."
-#         self.scale = scale
-#         self.num_steps = num_steps
-#         batch_shape, event_shape = torch.shape(scale), (num_steps,)
-#         super(GaussianRandomWalk, self).__init__(batch_shape, event_shape, validate_args=validate_args)
-#
-#     def sample(self, key, sample_shape=()):
-#         assert is_prng_key(key)
-#         shape = sample_shape + self.batch_shape + self.event_shape
-#         walks = torch.random.normal(key, shape=shape)
-#         return torch.cumsum(walks, axis=-1) * torch.expand_dims(self.scale, axis=-1)
-#
-#     @validate_sample
-#     def log_prob(self, value):
-#         init_prob = torch.distributions.Normal(0., self.scale).log_prob(value[..., 0])
-#         scale = torch.expand_dims(self.scale, -1)
-#         step_probs = torch.distributions.Normal(value[..., :-1], scale).log_prob(value[..., 1:])
-#         return init_prob + torch.sum(step_probs, axis=-1)
-#
-#     @property
-#     def mean(self):
-#         return torch.zeros(self.batch_shape + self.event_shape)
-#
-#     @property
-#     def variance(self):
-#         return torch.broadcast_to(torch.expand_dims(self.scale, -1) ** 2 * torch.arange(1, self.num_steps + 1),
-#                                   self.batch_shape + self.event_shape)
-#
-#     def tree_flatten(self):
-#         return (self.scale,), self.num_steps
-#
-#     @classmethod
-#     def tree_unflatten(cls, aux_data, params):
-#         return cls(*params, num_steps=aux_data)
-#
-#
-# def model(data):
-#     T = len(data)
-#     sigma = pyro.sample('sigma', dist.Exponential(50.))
-#     nu = pyro.sample('nu', dist.Exponential(.1))
-#     shifts = pyro.sample("h_t", dist.Normal(loc=torch.zeros(T), scale=torch.ones(T) * sigma))
-#     h_t = torch.cumsum(shifts, dim=0)
-#     y = pyro.sample("returns", dist.StudentT(df=nu, loc=torch.zeros(1), scale=(torch.exp(2*h_t) + 1e-12)), obs=torch.tensor(data))
-#     return y
-#
-#
-# def model_vec(data_vec):
-#     N = len(data_vec)
-#     rv_sigma = pyro.sample("rv_sigma", dist.Exponential(torch.tensor(50.)))
-#     rv_nu = pyro.sample("rv_nu", dist.Exponential(torch.tensor(0.1)))
-#
-#     # random walks model corresponds to scale_tril of tril of all one matrix
-#     rv_s = pyro.sample("rv_s", dist.MultivariateNormal(loc=torch.zeros(N)*0.0, scale_tril=torch.ones((N,N)).tril()))
-#     pyro.sample("obs",
-#                 dist.StudentT(rv_nu, loc=torch.tensor(0.), scale=rv_s.exp()).independent(),
-#                 obs=data_vec)
+with leg_plate, dim_plate:
+    with poutine.mask(mask=disturb_mask):
+        disturb = pyro.sample('v', GaussianRandomWalk(scale=torch.ones(1), num_steps=max_time.item()))
+disturb.shape
+
+with vote_plate, dim_plate:
+    polarity = pyro.sample('beta', dist.Normal(0, 5))
+
+with vote_plate:
+    popularity = pyro.sample('alpha', dist.Normal(0, 5))
+
+# temp_ideal = init_ideal_point.unsqueeze(-1)
+# print(temp_ideal.shape)
+# print(atten.shape)
+# print(disturb.shape)
+# all_temp_ideal = init_ideal_point + (atten * disturb).cumsum(dim=2)
+# all_temp_ideal.shape
+# print(all_temp_ideal.shape)
+
+ideal_point = pyro.deterministic("ideal_point", torch.cat([init_ideal_point, init_ideal_point + disturb], dim=2))
+ideal_point.shape
+
+batch_ideal = ideal_point[legs, :, ind_time_tensor]
+polarity_batch = polarity[votes]
+popularity_batch = popularity[votes]
+
+batch_ideal.shape
+polarity_batch.shape
+popularity_batch.shape
+
+torch.sum(batch_ideal * polarity_batch.squeeze(), dim=-1).shape
+popularity_batch.squeeze().shape
+
+# Combine parameters
+logit = torch.sum(batch_ideal * polarity_batch.squeeze(), dim=-1) + popularity_batch.squeeze()
+
+obs = responses
+obs.shape
+
+if obs is not None:
+    # If training outcomes are provided, run the sampling statement for the given data
+    with pyro.plate('observe_data', obs.size(0), device=device):
+        pyro.sample("obs", dist.Bernoulli(logits=logit), obs=obs)
+else:
+    # If no training outcomes are provided, return the samples from the predicted distributions
+    with pyro.plate('observe_data', legs.size(0), device=self.device):
+        obs = pyro.sample("obs", dist.Bernoulli(logits=logit))
+    return obs
 
 
-
-import pyro
-import pyro.distributions as dist
-import torch
-
-import torch.distributions.constraints as constraints
-
-from pyro.infer import SVI, Trace_ELBO, EmpiricalMarginal, TraceEnum_ELBO
-from pyro.infer.mcmc import MCMC, NUTS
-from pyro.optim import Adam, SGD
-
-import pyro.contrib.autoguide as autoguide
-
-import pandas as pd
-
-from functools import partial
-
-class TwoParamLog:
-    """2PL IRT model"""
-    def __init__(self, priors, device, num_items, num_models, verbose=False):
-        if priors not in ['vague', 'hierarchical']:
-            raise ValueError("Options for priors are vague and hierarchical")
-        if device not in ['cpu', 'gpu']:
-            raise ValueError("Options for device are cpu and gpu")
-        if num_items <= 0:
-            raise ValueError("Number of items must be greater than 0")
-        if num_models <= 0:
-            raise ValueError("Number of subjects must be greater than 0")
-        self.priors = priors
+class bayes_dynamic:
+    def __init__(self, n_legs, n_votes, max_time, k_dim=1, guide_type="auto", custom_init_values=None, disturb_mask=None, device=None):
+        super().__init__()
+        self.n_legs = n_legs
+        self.n_votes = n_votes
+        self.max_time = max_time
+        self.k_dim = k_dim
+        self.guide_type = guide_type
+        self.custom_init_values = custom_init_values
         self.device = device
-        self.num_items = num_items
-        self.num_models = num_models
-        self.verbose = verbose
+        self.disturb_mask = disturb_mask
 
+    def model(self, legs, votes, ind_time_tensor, obs=None):
+        # Declare context managers, implies conditional independence across the specified dimension
+        # 3 Dimensions: legislator/vote/observation, ideology dimension, time dimension
+        leg_plate = pyro.plate('legs', n_legs, dim=-3, device=device)
+        vote_plate = pyro.plate('votes', n_votes, dim=-3, device=device)
+        dim_plate = pyro.plate('dim', k_dim, dim=-2, device=device)
+        # time_plate = pyro.plate('time', max_time, dim=-1, device=device)
 
-    def model_vague(self, models, items, obs):
-        """Initialize a 2PL model with vague priors"""
-        with pyro.plate('thetas', self.num_models, device=self.device):
-            ability = pyro.sample('theta', dist.Normal(torch.tensor(0., device=self.device), torch.tensor(1., device=self.device)))
+        with leg_plate, dim_plate:
+            init_ideal_point = pyro.sample('theta', dist.Normal(0, 1))
+            atten = pyro.sample('tau', dist.Gamma(1, 1))
 
-        with pyro.plate('bs', self.num_items, device=self.device):
-            diff = pyro.sample('b', dist.Normal(torch.tensor(0., device=self.device), torch.tensor(0.1, device=self.device)))
-            slope = pyro.sample('a', dist.Normal(torch.tensor(0., device=self.device), torch.tensor(0.1, device=self.device)))
-
-        with pyro.plate('observe_data', obs.size(0), device=self.device):
-            pyro.sample("obs", dist.Bernoulli(logits=(slope[items]* (ability[models] - diff[items]))), obs=obs)
-
-
-    def guide_vague(self, models, items, obs):
-        """Initialize a 2PL guide with vague priors"""
-        # register learnable params in the param store
-        m_theta_param = pyro.param("loc_ability", torch.zeros(self.num_models, device=self.device))
-        s_theta_param = pyro.param("scale_ability", torch.ones(self.num_models, device=self.device),
-                            constraint=constraints.positive)
-        m_b_param = pyro.param("loc_diff", torch.zeros(self.num_items, device=self.device))
-        s_b_param = pyro.param("scale_diff", torch.empty(self.num_items, device=self.device).fill_(1.e1),
-                                constraint=constraints.positive)
-        m_a_param = pyro.param("loc_slope", torch.ones(self.num_items, device=self.device),
-                                constraint=constraints.positive)
-        s_a_param = pyro.param("scale_slope", torch.empty(self.num_items, device=self.device).fill_(1.e-6),
-                                constraint=constraints.positive)
-
-        # guide distributions
-        with pyro.plate('thetas', self.num_models, device=self.device):
-            dist_theta = dist.Normal(m_theta_param, s_theta_param)
-            pyro.sample('theta', dist_theta)
-        with pyro.plate('bs', self.num_items, device=self.device):
-            dist_b = dist.Normal(m_b_param, s_b_param)
-            pyro.sample('b', dist_b)
-
-            dist_a = dist.Normal(m_a_param, s_a_param)
-            pyro.sample('a', dist_a)
-
-
-    def model_hierarchical(self, models, items, obs):
-        """Initialize a 2PL model with hierarchical priors"""
-        mu_b = pyro.sample('mu_b', dist.Normal(torch.tensor(0., device=self.device), torch.tensor(1.e6, device=self.device)))
-        u_b = pyro.sample('u_b', dist.Gamma(torch.tensor(1., device=self.device), torch.tensor(1., device=self.device)))
-        mu_theta = pyro.sample('mu_theta', dist.Normal(torch.tensor(0., device=self.device), torch.tensor(1.e6, device=self.device)))
-        u_theta = pyro.sample('u_theta', dist.Gamma(torch.tensor(1., device=self.device), torch.tensor(1., device=self.device)))
-        mu_a = pyro.sample('mu_a', dist.Normal(torch.tensor(0., device=self.device), torch.tensor(1.e6, device=self.device)))
-        u_a = pyro.sample('u_a', dist.Gamma(torch.tensor(1., device=self.device), torch.tensor(1., device=self.device)))
-        with pyro.plate('thetas', self.num_models, device=self.device):
-            ability = pyro.sample('theta', dist.Normal(mu_theta, 1. / u_theta))
-        with pyro.plate('bs', self.num_items, device=self.device):
-            diff = pyro.sample('b', dist.Normal(mu_b, 1. / u_b))
-            slope = pyro.sample('a', dist.Normal(mu_a, 1. / u_a))
-        with pyro.plate('observe_data', obs.size(0)):
-            pyro.sample("obs", dist.Bernoulli(logits=slope[items] * (ability[models] - diff[items])), obs=obs)
-
-
-    def guide_hierarchical(self, models, items, obs):
-        """Initialize a 2PL guide with hierarchical priors"""
-        loc_mu_b_param = pyro.param('loc_mu_b', torch.tensor(0., device=self.device))
-        scale_mu_b_param = pyro.param('scale_mu_b', torch.tensor(1.e1, device=self.device),
-                                constraint=constraints.positive)
-        loc_mu_theta_param = pyro.param('loc_mu_theta', torch.tensor(0., device=self.device))
-        scale_mu_theta_param = pyro.param('scale_mu_theta', torch.tensor(1.e1, device=self.device),
-                            constraint=constraints.positive)
-        loc_mu_a_param = pyro.param('loc_mu_a', torch.tensor(0., device=self.device))
-        scale_mu_a_param = pyro.param('scale_mu_a', torch.tensor(1.e1, device=self.device),
-                            constraint=constraints.positive)
-        alpha_b_param = pyro.param('alpha_b', torch.tensor(1., device=self.device),
-                        constraint=constraints.positive)
-        beta_b_param = pyro.param('beta_b', torch.tensor(1., device=self.device),
-                        constraint=constraints.positive)
-        alpha_theta_param = pyro.param('alpha_theta', torch.tensor(1., device=self.device),
-                        constraint=constraints.positive)
-        beta_theta_param = pyro.param('beta_theta', torch.tensor(1., device=self.device),
-                        constraint=constraints.positive)
-        alpha_a_param = pyro.param('alpha_a', torch.tensor(1., device=self.device),
-                        constraint=constraints.positive)
-        beta_a_param = pyro.param('beta_a', torch.tensor(1., device=self.device),
-                        constraint=constraints.positive)
-        m_theta_param = pyro.param('loc_ability', torch.zeros(self.num_models, device=self.device))
-        s_theta_param = pyro.param('scale_ability', torch.ones(self.num_models, device=self.device),
-                            constraint=constraints.positive)
-        m_b_param = pyro.param('loc_diff', torch.zeros(self.num_items, device=self.device))
-        s_b_param = pyro.param('scale_diff', torch.ones(self.num_items, device=self.device),
-                                constraint=constraints.positive)
-        m_a_param = pyro.param('loc_slope', torch.zeros(self.num_items, device=self.device))
-        s_a_param = pyro.param('scale_slope', torch.ones(self.num_items, device=self.device),
-                                constraint=constraints.positive)
-
-        # sample statements
-        pyro.sample('mu_b', dist.Normal(loc_mu_b_param, scale_mu_b_param))
-        pyro.sample('u_b', dist.Gamma(alpha_b_param, beta_b_param))
-        pyro.sample('mu_theta', dist.Normal(loc_mu_theta_param, scale_mu_theta_param))
-        pyro.sample('u_theta', dist.Gamma(alpha_theta_param, beta_theta_param))
-        pyro.sample('mu_a', dist.Normal(loc_mu_a_param, scale_mu_a_param))
-        pyro.sample('u_a', dist.Gamma(alpha_a_param, beta_a_param))
-
-
-        with pyro.plate('thetas', self.num_models, device=self.device):
-            pyro.sample('theta', dist.Normal(m_theta_param, s_theta_param))
-        with pyro.plate('bs', self.num_items, device=self.device):
-            pyro.sample('b', dist.Normal(m_b_param, s_b_param))
-            pyro.sample('a', dist.Normal(m_a_param, s_a_param))
-
-
-    def fit(self, models, items, responses, num_epochs):
-        """Fit the IRT model with variational inference"""
-        optim = Adam({'lr': 0.1})
-        if self.priors == 'vague':
-            svi = SVI(self.model_vague, self.guide_vague, optim, loss=Trace_ELBO())
+        # with leg_plate, dim_plate:
+        #     if self.disturb_mask is not None:
+        #         with poutine.mask(mask=disturb_mask):
+        #             disturb = pyro.sample('v', GaussianRandomWalk(scale=torch.ones(1), num_steps=max_time.item()))
+        #     else:
+        #         disturb = pyro.sample('v', GaussianRandomWalk(scale=torch.ones(1), num_steps=max_time.item()))
+        if self.disturb_mask is not None:
+            with poutine.mask(mask=disturb_mask):
+                disturb = pyro.sample('v', GaussianRandomWalk(scale=atten.squeeze(), num_steps=max_time.item()).to_event())
         else:
-            svi = SVI(self.model_hierarchical, self.guide_hierarchical, optim, loss=Trace_ELBO())
+            disturb = pyro.sample('v', GaussianRandomWalk(scale=atten.squeeze(), num_steps=max_time.item()).to_event())
+        print(f'v shape{disturb.shape}')
 
+        with vote_plate, dim_plate:
+            polarity = pyro.sample('beta', dist.Normal(0, 5))
+
+        with vote_plate:
+            popularity = pyro.sample('alpha', dist.Normal(0, 5))
+
+        # temp_ideal = init_ideal_point.unsqueeze(-1)
+        # print(temp_ideal.shape)
+        # print(atten.shape)
+        # print(disturb.shape)
+        # all_temp_ideal = init_ideal_point + (atten * disturb).cumsum(dim=2)
+        # all_temp_ideal.shape
+        # print(all_temp_ideal.shape)
+
+        ideal_point = pyro.deterministic("ideal_point", torch.cat([init_ideal_point, init_ideal_point + disturb], dim=2))
+        # ideal_point.shape
+
+        batch_ideal = ideal_point[legs, :, ind_time_tensor]
+        polarity_batch = polarity[votes]
+        popularity_batch = popularity[votes]
+
+        # batch_ideal.shape
+        # polarity_batch.shape
+        # popularity_batch.shape
+
+        # torch.sum(batch_ideal * polarity_batch.squeeze(), dim=-1).shape
+        # popularity_batch.squeeze().shape
+
+        # Combine parameters
+        logit = torch.sum(batch_ideal * polarity_batch.squeeze(), dim=-1) + popularity_batch.squeeze()
+
+        obs = responses
+        # obs.shape
+
+        if obs is not None:
+            # If training outcomes are provided, run the sampling statement for the given data
+            with pyro.plate('observe_data', obs.size(0), device=device):
+                pyro.sample("obs", dist.Bernoulli(logits=logit), obs=obs)
+        else:
+            # If no training outcomes are provided, return the samples from the predicted distributions
+            with pyro.plate('observe_data', legs.size(0), device=self.device):
+                obs = pyro.sample("obs", dist.Bernoulli(logits=logit))
+            return obs
+
+
+    def guide_basic(self, legs, votes, ind_time_tensor, obs=None):
+        # register parameters
+        loc_theta = pyro.param("loc_init_ideal", lambda: torch.zeros(self.n_legs, self.k_dim, device=self.device).unsqueeze(-1))
+        scale_theta = pyro.param("scale_init_ideal", lambda: torch.ones(self.n_legs, self.k_dim, device=self.device).unsqueeze(-1),
+                                 constraint=constraints.positive)
+        loc_tau = pyro.param("loc_atten", lambda: torch.ones(self.n_legs, self.k_dim, device=device).unsqueeze(-1),
+                             constraint=constraints.positive)
+        scale_tau = pyro.param("scale_atten", lambda: torch.ones(self.n_legs, self.k_dim, device=self.device).unsqueeze(-1),
+                               constraint=constraints.positive)
+        loc_v = pyro.param("loc_disturb", lambda: torch.zeros(self.n_legs, self.k_dim, self.max_time, device=self.device))
+        scale_v = pyro.param("scale_disturb", lambda: torch.ones(self.n_legs, self.k_dim, self.max_time, device=self.device),
+                             constraint=constraints.positive)
+        loc_beta = pyro.param("loc_polarity", lambda: torch.zeros(self.n_votes, self.k_dim, device=self.device).unsqueeze(-1))
+        scale_beta = pyro.param("scale_polarity", lambda: 5.0 * torch.ones(self.n_votes, self.k_dim, device=self.device).unsqueeze(-1),
+                                constraint=constraints.positive)
+        loc_alpha = pyro.param("loc_popularity", lambda: torch.zeros(self.n_votes, 1, device=self.device).unsqueeze(-1))
+        scale_alpha = pyro.param("scale_popularity", lambda: 5.0 * torch.ones(self.n_votes, 1, device=self.device).unsqueeze(-1),
+                                 constraint=constraints.positive)
+
+        print(f'guide v shape{scale_v.shape}')
+
+        leg_plate = pyro.plate('legs', self.n_legs, dim=-3, device=self.device)
+        vote_plate = pyro.plate('votes', self.n_votes, dim=-3, device=self.device)
+        dim_plate = pyro.plate('dim', self.k_dim, dim=-2, device=self.device)
+        # time_plate = pyro.plate('time', self.max_time, dim=-1, device=self.device)
+
+        with leg_plate, dim_plate:
+            pyro.sample('theta', dist.Normal(loc_theta, scale_theta))
+            pyro.sample('tau', dist.Gamma(loc_tau, scale_tau))
+
+        if self.disturb_mask is not None:
+            with poutine.mask(mask=disturb_mask):
+                pyro.sample('v', dist.Normal(loc_v, scale_v))
+        else:
+            pyro.sample('v', dist.Normal(loc_v, scale_v))
+
+        with vote_plate, dim_plate:
+            pyro.sample('beta', dist.Normal(loc_beta, scale_beta))
+
+        with vote_plate:
+            pyro.sample('alpha', dist.Normal(loc_alpha, scale_alpha))
+
+    def fit(self, legs, votes, ind_time_tensor, responses):
+        if self.guide_type == "auto":
+            guide = autoguides.AutoNormal(self.model)
+        elif self.guide_type == "basic":
+            guide = self.guide_basic
+            # Define the guide, intialize to the values returned from process data
+            # guide = autoguides.AutoNormal(bayes_irt_dynamic)
+            # guide = guide_irt_dynamic(legs, n_legs, votes, n_votes, ind_time_tensor, max_time, y=responses, k_dim=1, device=None)
+            # guide = bayes_irt_dynamic(legs, n_legs, votes, n_votes, ind_time_tensor, max_time, k_dim=1, device=None)
         pyro.clear_param_store()
-        for j in range(num_epochs):
-            loss = svi.step(models, items, responses)
-            if j % 100 == 0 and self.verbose:
-                print("[epoch %04d] loss: %.4f" % (j + 1, loss))
+        if self.guide_type == "auto":
+            pyro.get_param_store().get_param("AutoNormal.locs.theta", init_tensor=self.custom_init_values)
+            pyro.get_param_store().get_param("AutoNormal.scales.theta", init_tensor=torch.ones(self.n_legs, self.k_dim, device=self.device).unsqueeze(-1), constraint=constraints.positive)
+            pyro.get_param_store().get_param("AutoNormal.locs.tau", init_tensor=0.1 * torch.ones(self.n_legs, self.k_dim, device=self.device).unsqueeze(-1), constraint=constraints.positive)
+            pyro.get_param_store().get_param("AutoNormal.scales.tau", init_tensor=0.1 * torch.ones(self.n_legs, self.k_dim, device=self.device).unsqueeze(-1), constraint=constraints.positive)
+            pyro.get_param_store().get_param("AutoNormal.locs.v", init_tensor=torch.zeros(self.n_legs, self.k_dim, self.max_time, device=self.device))
+            pyro.get_param_store().get_param("AutoNormal.scales.v", init_tensor=torch.ones(self.n_legs, self.k_dim, self.max_time, device=self.device), constraint=constraints.interval(1e-7, 1e7))
+            pyro.get_param_store().get_param("AutoNormal.locs.beta", init_tensor=torch.zeros(self.n_votes, self.k_dim, device=self.device).unsqueeze(-1))
+            pyro.get_param_store().get_param("AutoNormal.scales.beta", init_tensor=torch.ones(self.n_votes, self.k_dim, device=self.device).unsqueeze(-1), constraint=constraints.positive)
+            pyro.get_param_store().get_param("AutoNormal.locs.alpha", init_tensor=torch.zeros(self.n_votes, 1, device=self.device).unsqueeze(-1))
+            pyro.get_param_store().get_param("AutoNormal.scales.alpha", init_tensor=torch.ones(self.n_votes, 1, device=self.device).unsqueeze(-1), constraint=constraints.positive)
+        elif self.guide_type == "basic":
+            pyro.get_param_store().get_param("loc_init_ideal", init_tensor=self.custom_init_values)
+            # pyro.get_param_store().get_param("scale_init_ideal", init_tensor=torch.ones(self.n_legs, self.k_dim, device=self.device).unsqueeze(-1), constraint=constraints.positive)
+            # pyro.get_param_store().get_param("loc_atten", init_tensor=torch.ones(self.n_legs, self.k_dim, device=self.device).unsqueeze(-1), constraint=constraints.positive)
+            # pyro.get_param_store().get_param("scale_atten", init_tensor=torch.ones(self.n_legs, self.k_dim, device=self.device).unsqueeze(-1), constraint=constraints.positive)
+            # pyro.get_param_store().get_param("loc_disturb", init_tensor=torch.zeros(self.n_legs, self.k_dim, self.max_time, device=self.device))
+            # pyro.get_param_store().get_param("scale_disturb", init_tensor=torch.ones(self.n_legs, self.k_dim, self.max_time, device=self.device), constraint=constraints.positive)
+            # pyro.get_param_store().get_param("loc_polarity", init_tensor=torch.zeros(self.n_votes, self.k_dim, device=self.device).unsqueeze(-1))
+            # pyro.get_param_store().get_param("scale_polarity", init_tensor=5.0 * torch.ones(self.n_votes, self.k_dim, device=self.device).unsqueeze(-1), constraint=constraints.positive)
+            # pyro.get_param_store().get_param("loc_popularity", init_tensor=torch.zeros(self.n_votes, 1, device=self.device).unsqueeze(-1))
+            # pyro.get_param_store().get_param("scale_popularity", init_tensor=5.0 * torch.ones(self.n_votes, 1, device=self.device).unsqueeze(-1), constraint=constraints.positive)
 
-        print("[epoch %04d] loss: %.4f" % (j + 1, loss))
-        values = ['loc_diff', 'scale_diff', 'loc_ability', 'scale_ability']
+        logger.info("Run the variational inference")
+        # Setup the variational inference
+        optim = Adam({'lr': 0.05})
+        svi = custom_SVI(self.model, guide, optim, loss=Trace_ELBO(), l2_penalty=0.0)
+        self.guide_used = guide
 
+        min_loss = float('inf')  # initialize to infinity
+        patience = 0
+        for j in tqdm(range(15000)):
+            loss = svi.step(legs, votes, ind_time_tensor, responses)
+            # loss = svi.penalized_step(legs, votes, ind_time_tensor, responses)
 
-    def fit_MCMC(self, models, items, responses, num_epochs):
-        """Fit the IRT model with MCMC"""
-        sites = ['theta', 'b']
-        nuts_kernel = NUTS(self.model_vague, adapt_step_size=True)
-        hmc_posterior = MCMC(nuts_kernel, num_samples=1000, warmup_steps=100) \
-            .run(models, items, responses)
-        theta_sum = self.summary(hmc_posterior, ['theta']).items()
-        b_sum = self.summary(hmc_posterior, ['b']).items()
-        print(theta_sum)
-        print(b_sum)
+            if j % 100 == 0:
+                logger.info("[epoch %04d] loss: %.4f" % (j + 1, loss))
+                min_loss = min(loss, min_loss)
+                if (loss > min_loss):
+                    if patience >= 5:
+                        break
+                    else:
+                        patience += 1
+                else:
+                    patience = 0
 
-
-    def summary(self, traces, sites):
-        """Aggregate marginals for MCM"""
-        marginal = EmpiricalMarginal(traces, sites)._get_samples_and_weights()[0].detach().cpu().numpy()
-        print(marginal)
-        site_stats = {}
-        for i in range(marginal.shape[1]):
-            site_name = sites[i]
-            marginal_site = pd.DataFrame(marginal[:, i]).transpose()
-            describe = partial(pd.Series.describe, percentiles=[.05, 0.25, 0.5, 0.75, 0.95])
-            site_stats[site_name] = marginal_site.apply(describe, axis=1) \
-                [["mean", "std", "5%", "25%", "50%", "75%", "95%"]]
-        return site_stats
-
-
-model = TwoParamLog(priors="vague", device="cpu", num_items=n_votes, num_models=n_legs, verbose=True)
-model.fit(legs, votes, responses, 500)
-
-
-
-
-
-# test_model(model, autoguides.AutoNormal(bayes_irt_dynamic), Trace_ELBO())
-
-
-logger.info("Test a model with covariates")
-logger.info("Setup the Bayesian Model")
-# Choose the optimizer used by the variational algorithm
-optim = Adam({'lr': 0.1, 'weight_decay': 0.00001})
-
-# Define the guide, intialize to the values returned from process data
-# guide = autoguides.AutoNormal(bayes_irt_dynamic)
-# guide = guide_irt_dynamic(legs, n_legs, votes, n_votes, ind_time_tensor, max_time, y=responses, k_dim=1, device=None)
-guide = bayes_irt_dynamic(legs, n_legs, votes, n_votes, ind_time_tensor, max_time, k_dim=1, device=None)
-
-# Setup the variational inference
-svi = SVI(bayes_irt_dynamic, guide, optim, loss=Trace_ELBO())
-# svi.step(legs, n_legs, votes, n_votes, ind_time_tensor, max_time, y=responses, k_dim=1, device=None)
-
-logger.info("Run the variational inference")
 pyro.clear_param_store()
-# pyro.get_param_store().setdefault("AutoNormal.locs.sigma", init_constrained_value=1.0 * torch.ones(n_legs, k_dim), constraint=constraints.positive)
-# pyro.get_param_store().setdefault("AutoNormal.locs.theta", init_constrained_value=custom_init_values)
-# pyro.get_param_store().setdefault("AutoNormal.locs.v", init_constrained_value=torch.zeros(n_legs, max_time))
-
-min_loss = float('inf')  # initialize to infinity
-patience = 0
-for j in tqdm(range(5000)):
-    loss = svi.step(legs, n_legs, votes, n_votes, ind_time_tensor, max_time, y=responses, k_dim=1, device=None)
-    # define optimizer and loss function
-    # optimizer = torch.optim.Adam(my_parameters, {"lr": 0.1})
-    # loss_fn = pyro.infer.Trace_ELBO().differentiable_loss
-    # compute loss
-    # loss = loss_fn(bayes_irt_dynamic, guide, legs, n_legs, votes, n_votes, ind_time_tensor, max_time, y=responses, k_dim=1, device=None)
-    # loss.backward()
-    # take a step and zero the parameter gradients
-    # optimizer.step()
-    # optimizer.zero_grad()
-    if j % 100 == 0:
-        logger.info("[epoch %04d] loss: %.4f" % (j + 1, loss))
-        min_loss = min(loss, min_loss)
-        if (loss > min_loss):
-            if patience >= 4:
-                break
-            else:
-                patience += 1
-        else:
-            patience = 0
-
-indices = (torch.arange(start=0, end=max_time + 1).repeat(n_legs, 1))
-mask = indices.le(sessions_served.unsqueeze(-1))
-
-init_ideal_point = pyro.param("AutoNormal.locs.theta")
-atten = pyro.param("AutoNormal.locs.sigma")
-atten.shape
-disturb = pyro.param("AutoNormal.locs.v")
-disturb.shape
-disturb.max(axis=1) == disturb.max()
-# disturb
-disturb.shape
-
-pyro.param("AutoNormal.locs.sigma")
-pyro.param("AutoNormal.scales.sigma")
-
-pyro.param("AutoNormal.locs.v") * mask[:, 1:]
-pyro.param("AutoNormal.scales.v") * mask[:, 1:]
+test = bayes_dynamic(n_legs, n_votes, max_time, k_dim=k_dim, guide_type="basic", custom_init_values=custom_init_values.unsqueeze(-1), disturb_mask=None, device=device)
+test.fit(legs, votes, ind_time_tensor, responses)
+pyro.get_param_store().keys()
 
 
-init_ideal_point.shape
-later_ideal_point = init_ideal_point + (atten * disturb).squeeze().cumsum(dim=-1)
-later_ideal_point.shape
-ideal_point = torch.hstack([init_ideal_point, later_ideal_point])
+leg_plate = pyro.plate('legs', n_legs, dim=-3, device=device)
+vote_plate = pyro.plate('votes', n_votes, dim=-3, device=device)
+dim_plate = pyro.plate('dim', k_dim, dim=-2, device=device)
+time_plate = pyro.plate('time', max_time + 1, dim=-1, device=device)
+
+with leg_plate, dim_plate:
+    init_ideal_point = pyro.sample('theta', dist.Normal(0, 1))
+    atten = pyro.sample('tau', dist.Gamma(0.1, 0.1))
+
+with time_plate:
+    disturb = pyro.sample('thingy', dist.Normal(init_ideal_point, atten))
+
+indices = (torch.arange(start=0, end=max_time + 1, device=device).repeat(n_legs, 1))
+disturb_mask = indices.le(sessions_served.unsqueeze(-1)).unsqueeze(1)
+
+(disturb * disturb_mask).cumsum(-1)
+disturb.cumsum(-1) * disturb_mask
+
+# with poutine.mask(mask=disturb_mask):
+#     disturb = pyro.sample('v', GaussianRandomWalk(scale=atten.squeeze(), num_steps=max_time.item()))
+# disturb.shape
+
+# with leg_plate, dim_plate:
+#     with poutine.mask(mask=disturb_mask):
+#         disturb = pyro.sample('v', GaussianRandomWalk(scale=torch.ones(1), num_steps=max_time.item()))
+# disturb.shape
+
+with vote_plate, dim_plate:
+    polarity = pyro.sample('beta', dist.Normal(0, 5))
+
+with vote_plate:
+    popularity = pyro.sample('alpha', dist.Normal(0, 5))
+
+# temp_ideal = init_ideal_point.unsqueeze(-1)
+# print(temp_ideal.shape)
+# print(atten.shape)
+# print(disturb.shape)
+# all_temp_ideal = init_ideal_point + (atten * disturb).cumsum(dim=2)
+# all_temp_ideal.shape
+# print(all_temp_ideal.shape)
+
+# list(map(param_dict.get, legs))
+
+ideal_point = pyro.deterministic("ideal_point", disturb.cumsum(-1))
 ideal_point.shape
 
-ideal_point * mask
-
-# ideal_point
-# temp_ideal = pd.DataFrame((ideal_point * mask).detach().numpy())
-# temp_ideal[temp_ideal[6] != 0].sort_values(6)
-# temp_ideal[(temp_ideal[0].abs() > temp_ideal[6].abs()) & (temp_ideal[6] != 0)].sort_values(6)
-
-
-
-n_samples = 1000
-
-# This is the "normal" case, our models are large enough we exhaust memory, hence the iterative approach
-# posterior_predictive = pyro.infer.predictive.Predictive(bayes_irt_full, guide=guide, num_samples=n_samples, return_sites=["obs"])
-# preds = posterior_predictive(legs, votes, covariates=covariates, device=device)["obs"].mean(axis=0).squeeze()
-# preds_test = posterior_predictive(legs_test, votes_test, covariates=covariates_test, device=device)["obs"].mean(axis=0).squeeze()
-
-posterior_predictive = pyro.infer.predictive.Predictive(bayes_irt_dynamic, guide=guide, num_samples=1, return_sites=["obs", "ideal_point"])
-
-preds = torch.zeros(size=responses.shape, device=device)
-preds_test = torch.zeros(size=responses_test.shape, device=device)
-ideal_point_list = []
-for _ in tqdm(range(n_samples)):
-    in_sample_predictive = posterior_predictive(legs, n_legs, votes, n_votes, ind_time_tensor, max_time, y=None, k_dim=1, device=None)
-    preds += in_sample_predictive["obs"].squeeze()
-    ideal_point_list += [in_sample_predictive["ideal_point"].squeeze()]
-    preds_test += posterior_predictive(legs_test, n_legs, votes_test, n_votes, ind_time_tensor_test, max_time, y=None, k_dim=1, device=None)["obs"].squeeze()
-preds = preds / n_samples
-preds_test = preds_test / n_samples
-
-ideal_point_list[10]
-torch.stack(ideal_point_list, dim=-1).mean(axis=2) * mask
-ideal_point * mask
-torch.stack(ideal_point_list, dim=-1).std(axis=2) * mask
-
-pyro.get_param_store().keys()
-pyro.infer.predictive.Predictive(bayes_irt_dynamic, guide=guide, num_samples=1)(legs, n_legs, votes, n_votes, ind_time_tensor, max_time, y=None, k_dim=1, device=None)["ideal_point"]
-pyro.param("AutoNormal.locs.v")
-
-# Define metrics
-criterion = torch.nn.BCELoss(reduction="mean")
-log_like = torch.nn.BCELoss(reduction="sum")
-k = 0
-v_indices = (torch.arange(start=0, end=max_time).repeat(n_legs, 1))
-v_mask = v_indices.le(sessions_served.unsqueeze(-1))
-for param_name, param_value in pyro.get_param_store().items():
-    print(param_name)
-    if "locs" in param_name:
-        if ".v" in param_name:
-            # Use only relevant entries for v
-            k += (param_value * v_mask != 0).sum().item()
-        else:
-            k += np.array(param_value.shape).prod()
-
-pyro.get_param_store().keys()
-pyro.param("AutoNormal.locs.v")
-
-# Calculate log loss and accuracy scores, in sample
-train_metrics = {"bce": criterion(preds, responses).item(),
-                 "log_like": log_like(preds, responses).item(),
-                 "accuracy": (1.0 * (responses == preds.round())).mean().item(),
-                }
-logger.info(f'Train loss (VB): {train_metrics["bce"]}')
-logger.info(f'Train accuracy (VB): {train_metrics["accuracy"]}')
-
-# Calculate log loss and accuracy scores, out of sample
-test_metrics = {"bce": criterion(preds_test, responses_test).item(),
-                "log_like": log_like(preds_test, responses_test).item(),
-                "accuracy": (1.0 * (responses_test == preds_test.round())).mean().item(),
-                }
-logger.info(f'Test loss (VB): {test_metrics["bce"]}')
-logger.info(f'Test accuracy (VB): {test_metrics["accuracy"]}')
-
-train_metrics = {'train_' + k: v for k, v, in train_metrics.items()}
-test_metrics = {'test_' + k: v for k, v, in test_metrics.items()}
-
-metrics = {**train_metrics, **test_metrics}
-
-metrics["train_n"] = responses.shape[0]
-metrics["train_k"] = k
-metrics["train_aic"] = ((2 * k) - (2 * -1 * metrics["train_log_like"]))
-metrics["train_bic"] = k * np.log(metrics["train_n"]) - (2 * -1 * metrics["train_log_like"])
-
-metrics["test_n"] = responses_test.shape[0]
-metrics["test_k"] = k
-metrics["test_aic"] = ((2 * k) - (2 * -1 * metrics["test_log_like"]))
-metrics["test_bic"] = k * np.log(metrics["test_n"]) - (2 * -1 * metrics["test_log_like"])
-
-final_metrics = {**data_params, **metrics}
-final_metrics
-
-
-
-
-
-# init_ideal_point.shape
-# later_ideal_point = init_ideal_point + (atten * disturb).squeeze().cumsum(dim=-1)
-# later_ideal_point.shape
-
-init_ideal_point = pyro.param("AutoNormal.locs.theta")
-atten = pyro.param("AutoNormal.locs.sigma")
-disturb = pyro.param("AutoNormal.locs.v")
-ideal_point = torch.hstack([init_ideal_point, init_ideal_point + (atten * disturb).cumsum(dim=-1)])
-ideal_point.shape
-
-indices = (torch.arange(start=0, end=max_time + 1).repeat(len(ideal_point), 1))
-mask = indices.le(sessions_served.unsqueeze(-1))
-
-ideal_point
-temp_ideal = pd.DataFrame((ideal_point * mask).detach().numpy())
-temp_ideal[temp_ideal[6] != 0].sort_values(6)
-temp_ideal[(temp_ideal[0].abs() > temp_ideal[6].abs()) & (temp_ideal[6] != 0)].sort_values(6)
-
-leg_data = pd.read_feather(DATA_PATH + "leg_data.feather")
-
-leg_data[leg_data["leg_id"] == vote_data["leg_crosswalk"][682]]
-
-leg_crosswalk_rev = {v: k for k, v in vote_data["leg_crosswalk"].items()}
-
-leg_data[leg_data["bioname"].str.contains("FLAKE")]
-leg_data[leg_data["bioname"].str.contains("McCAIN")]
-leg_crosswalk_rev[20100]
-temp_ideal.loc[603]
-leg_crosswalk_rev[15039]
-temp_ideal.loc[1073]
-
-temp_ideal.sort_values(0)
-
-leg_data[leg_data["leg_id"] == vote_data["leg_crosswalk"][252]]
-
-temp_ideal[0].hist()
-
-
-
-
-
-
-# Set some constants
-n_legs = vote_data["J"]
-n_votes = vote_data["M"]
-if covariates_list:
-    n_covar = covariates.shape[1]
-
-# Make train and test data bundles
-core_data = [legs, n_legs, votes, n_votes]
-core_data_test = [legs_test, n_legs, votes_test, n_votes]
-aux_data = {}
-aux_data_test = {}
-if covariates_list:
-    aux_data["k_dim"] = k_dim
-    aux_data["covariates"] = covariates
-    aux_data["n_covar"] = n_covar
-
-    aux_data_test["k_dim"] = k_dim
-    aux_data_test["covariates"] = covariates_test
-    aux_data_test["n_covar"] = n_covar
-if k_time > 0:
-    aux_data["k_time"] = k_time
-    aux_data["time_passed"] = time_tensor
-
-    aux_data_test["k_time"] = k_time
-    aux_data_test["time_passed"] = time_tensor_test
-
-# Setup the optimizer
-optim = Adam({'lr': 0.1, 'weight_decay': 0.1})
-
-# Define the guide
-guide = autoguides.AutoNormal(bayes_irt_full)
-# guide = autoguides.AutoNormal(bayes_irt_basic, init_loc_fn=init_to_value(values={'theta': custom_init_values}))
-
-# Setup the variational inference
-svi = SVI(bayes_irt_full, guide, optim, loss=Trace_ELBO())
-
-logger.info("Fit the model using variational bayes")
-# Run variational inference
-pyro.clear_param_store()
-min_loss = float('inf') # initialize to infinity
-patience = 0
-for j in tqdm(range(5000)):
-    loss = svi.step(*core_data, y=responses, device=device, **aux_data)
-    if j % 100 == 0:
-        logger.info("[epoch %04d] loss: %.4f" % (j + 1, loss))
-        min_loss = min(loss, min_loss)
-        if (loss > min_loss):
-            if patience >= 4:
-                break
-            else:
-                patience += 1
-        else:
-            patience = 0
-
-n_samples = 1000
-
-# This is the "normal" case, our models are large enough we exhaust memory, hence the iterative approach
-# posterior_predictive = pyro.infer.predictive.Predictive(bayes_irt_full, guide=guide, num_samples=n_samples, return_sites=["obs"])
-# preds = posterior_predictive(legs, votes, covariates=covariates, device=device)["obs"].mean(axis=0).squeeze()
-# preds_test = posterior_predictive(legs_test, votes_test, covariates=covariates_test, device=device)["obs"].mean(axis=0).squeeze()
-
-posterior_predictive = pyro.infer.predictive.Predictive(bayes_irt_full, guide=guide, num_samples=1, return_sites=["obs"])
-
-preds = torch.zeros(size=responses.shape, device=device)
-preds_test = torch.zeros(size=responses_test.shape, device=device)
-for _ in tqdm(range(n_samples)):
-    preds += posterior_predictive(*core_data, device=device, **aux_data)["obs"].squeeze()
-    preds_test += posterior_predictive(*core_data_test, device=device, **aux_data_test)["obs"].squeeze()
-preds = preds / n_samples
-preds_test = preds_test / n_samples
-
-# Define metrics
-criterion = torch.nn.BCELoss(reduction="mean")
-log_like = torch.nn.BCELoss(reduction="sum")
-k = 0
-for param_name, param_value in pyro.get_param_store().items():
-    if "locs" in param_name:
-        k += np.array(param_value.shape).prod()
-
-# Calculate log loss and accuracy scores, in sample
-train_metrics = {"bce": criterion(preds, responses).item(),
-                 "log_like": log_like(preds, responses).item(),
-                 "accuracy": (1.0 * (responses == preds.round())).mean().item(),
-                }
-logger.info(f'Train loss (VB): {train_metrics["bce"]}')
-logger.info(f'Train accuracy (VB): {train_metrics["accuracy"]}')
-
-# Calculate log loss and accuracy scores, out of sample
-test_metrics = {"bce": criterion(preds_test, responses_test).item(),
-                "log_like": log_like(preds_test, responses_test).item(),
-                "accuracy": (1.0 * (responses_test == preds_test.round())).mean().item(),
-                }
-logger.info(f'Test loss (VB): {test_metrics["bce"]}')
-logger.info(f'Test accuracy (VB): {test_metrics["accuracy"]}')
-
-train_metrics = {'train_' + k: v for k, v, in train_metrics.items()}
-test_metrics = {'test_' + k: v for k, v, in test_metrics.items()}
-
-metrics = {**train_metrics, **test_metrics}
-
-metrics["train_n"] = responses.shape[0]
-metrics["train_k"] = k
-metrics["train_aic"] = ((2 * k) - (2 * -1 * metrics["train_log_like"]))
-metrics["train_bic"] = k * np.log(metrics["train_n"]) - (2 * -1 * metrics["train_log_like"])
-
-metrics["test_n"] = responses_test.shape[0]
-metrics["test_k"] = k
-metrics["test_aic"] = ((2 * k) - (2 * -1 * metrics["test_log_like"]))
-metrics["test_bic"] = k * np.log(metrics["test_n"]) - (2 * -1 * metrics["test_log_like"])
-
-final_metrics = {**data_params, **metrics}
-final_metrics
-
-
-
-import math
-import os
-import torch
-import torch.distributions.constraints as constraints
-import pyro
-from pyro.optim import Adam
-from pyro.infer import SVI, Trace_ELBO
-import pyro.distributions as dist
-
-# this is for running the notebook in our testing framework
-smoke_test = ('CI' in os.environ)
-n_steps = 2 if smoke_test else 2000
-
-# enable validation (e.g. validate parameters of distributions)
-# assert pyro.__version__.startswith('1.5.2')
-pyro.enable_validation(True)
-
-# clear the param store in case we're in a REPL
-pyro.clear_param_store()
-
-# create some data with 6 observed heads and 4 observed tails
-data = []
-for _ in range(6):
-    data.append(torch.tensor(1.0))
-for _ in range(4):
-    data.append(torch.tensor(0.0))
-
-def model(data):
-    # define the hyperparameters that control the beta prior
-    alpha0 = torch.tensor(10.0)
-    beta0 = torch.tensor(10.0)
-    # sample f from the beta prior
-    f = pyro.sample("latent_fairness", dist.Beta(alpha0, beta0))
-    # loop over the observed data
-    for i in range(len(data)):
-        # observe datapoint i using the bernoulli likelihood
-        pyro.sample("obs_{}".format(i), dist.Bernoulli(f), obs=data[i])
-
-def guide(data):
-    # register the two variational parameters with Pyro
-    # - both parameters will have initial value 15.0.
-    # - because we invoke constraints.positive, the optimizer
-    # will take gradients on the unconstrained parameters
-    # (which are related to the constrained parameters by a log)
-    alpha_q = pyro.param("alpha_q", torch.tensor(15.0),
-                         constraint=constraints.positive)
-    beta_q = pyro.param("beta_q", torch.tensor(15.0),
-                        constraint=constraints.positive)
-    # sample latent_fairness from the distribution Beta(alpha_q, beta_q)
-    pyro.sample("latent_fairness", dist.Beta(alpha_q, beta_q))
-
-# setup the optimizer
-adam_params = {"lr": 0.0005, "betas": (0.90, 0.999)}
-optimizer = Adam(adam_params)
-
-# setup the inference algorithm
-svi = SVI(model, guide, optimizer, loss=Trace_ELBO())
-
-# do gradient steps
-for step in range(n_steps):
-    svi.step(data)
-    if step % 100 == 0:
-        print('.', end='')
-
-# grab the learned variational parameters
-alpha_q = pyro.param("alpha_q").item()
-beta_q = pyro.param("beta_q").item()
-
-# here we use some facts about the beta distribution
-# compute the inferred mean of the coin's fairness
-inferred_mean = alpha_q / (alpha_q + beta_q)
-# compute inferred standard deviation
-factor = beta_q / (alpha_q * (1.0 + alpha_q + beta_q))
-inferred_std = inferred_mean * math.sqrt(factor)
-
-print("\nbased on the data and our prior belief, the fairness " +
-      "of the coin is %.3f +- %.3f" % (inferred_mean, inferred_std))
+batch_ideal = ideal_point[legs, :, ind_time_tensor]
+polarity_batch = polarity[votes]
+popularity_batch = popularity[votes]
+
+batch_ideal.shape
+polarity_batch.shape
+popularity_batch.shape
+
+torch.sum(batch_ideal * polarity_batch.squeeze(), dim=-1).shape
+popularity_batch.squeeze().shape
+
+# Combine parameters
+logit = torch.sum(batch_ideal * polarity_batch.squeeze(), dim=-1) + popularity_batch.squeeze()
+
+obs = responses
+obs.shape
+
+if obs is not None:
+    # If training outcomes are provided, run the sampling statement for the given data
+    with pyro.plate('observe_data', obs.size(0), device=device):
+        pyro.sample("obs", dist.Bernoulli(logits=logit), obs=obs)
+else:
+    # If no training outcomes are provided, return the samples from the predicted distributions
+    with pyro.plate('observe_data', legs.size(0), device=self.device):
+        obs = pyro.sample("obs", dist.Bernoulli(logits=logit))
+    return obs
