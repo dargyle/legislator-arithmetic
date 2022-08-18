@@ -18,7 +18,7 @@ import numpy as np
 from .data_processing import process_data, format_model_data
 from .random_votes import generate_nominate_votes
 
-from constants import DATA_PATH
+from .constants import DATA_PATH
 
 from sklearn.metrics import accuracy_score
 

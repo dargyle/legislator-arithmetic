@@ -1,7 +1,7 @@
 import numpy as np
 import pandas as pd
 
-from constants import DATA_PATH
+from .constants import DATA_PATH
 
 import logging
 logger = logging.getLogger(__name__)
