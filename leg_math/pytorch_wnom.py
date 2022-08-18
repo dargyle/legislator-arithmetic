@@ -50,7 +50,8 @@ def gen_shuffled_data(n_shuffles, shuffle_data_list, static_data_list=[], p=0.8,
     while num <= n_shuffles:
         # Get a random list of vote ids without replacement
         # Get a random permutation and then select the desired number of elements
-        random_indexer = torch.randperm(len(vote_ids), device=shuffle_data_list[1].device)[:n_samples]
+        random_indexer = torch.randperm(
+            len(vote_ids), device=shuffle_data_list[1].device)[:n_samples]
         random_vote_ids = vote_ids[random_indexer]
         # Get a mask the length of all the data
         mask = in1d(shuffle_data_list[1], random_vote_ids)
@@ -71,6 +72,7 @@ class wnom_basic(nn.Module):
     """
     A class for implementing wnominate in pytorch
     """
+
     def __init__(self, n_legs, n_votes, k_dim, pretrained=None):
         """
         Instantiate using the embeddings of legislator and bill info
@@ -107,8 +109,10 @@ class wnom_basic(nn.Module):
         self.max_norm_(self.no_points)
 
         # Calculate distances from ideal points
-        distances1 = torch.sum(torch.square(self.ideal_points[legs] - self.yes_points[votes]) * torch.square(self.w), axis=1)
-        distances2 = torch.sum(torch.square(self.ideal_points[legs] - self.no_points[votes]) * torch.square(self.w), axis=1)
+        distances1 = torch.sum(torch.square(
+            self.ideal_points[legs] - self.yes_points[votes]) * torch.square(self.w), axis=1)
+        distances2 = torch.sum(torch.square(
+            self.ideal_points[legs] - self.no_points[votes]) * torch.square(self.w), axis=1)
 
         # The key wnominate layer
         result = self.beta * (torch.exp(-0.5 * distances1) - torch.exp(-0.5 * distances2))
@@ -120,6 +124,7 @@ class wnom_full(nn.Module):
     """
     A class for implementing dwnominate, dynamic ideal points
     """
+
     def __init__(self, n_legs, n_votes, k_dim, pretrained=None, k_time=0, dropout_rate=0.0):
         """
         Instantiate using the embeddings of legislator and bill info
@@ -188,7 +193,8 @@ class wnom_full(nn.Module):
                 norm_initial = initial_ideal.norm(2, dim=1, keepdim=True)
                 norm_final = final_ideal.norm(2, dim=1, keepdim=True)
                 # Get the biger of the two norms
-                norm = torch.max(torch.cat([norm_initial, norm_final], axis=1), dim=1, keepdim=True)[0]
+                norm = torch.max(torch.cat([norm_initial, norm_final],
+                                           axis=1), dim=1, keepdim=True)[0]
                 desired = torch.clamp(norm, max=1)
                 reduce_factor = desired / norm
                 validation_check = reduce_factor.isnan()
@@ -231,8 +237,10 @@ class wnom_full(nn.Module):
             ideal_points_use = self.ideal_points[legs]
 
         # Calculate distances from ideal points
-        distances1 = torch.sum(torch.square(ideal_points_use - self.yes_points[votes]) * torch.square(self.w), axis=1)
-        distances2 = torch.sum(torch.square(ideal_points_use - self.no_points[votes]) * torch.square(self.w), axis=1)
+        distances1 = torch.sum(torch.square(
+            ideal_points_use - self.yes_points[votes]) * torch.square(self.w), axis=1)
+        distances2 = torch.sum(torch.square(
+            ideal_points_use - self.no_points[votes]) * torch.square(self.w), axis=1)
 
         # Final dwnominate layer
         final_distance = torch.exp(-0.5 * distances1) - torch.exp(-0.5 * distances2)
@@ -255,7 +263,8 @@ if __name__ == '__main__':
         device = torch.device('cpu')
 
     logger.info("Generate a test dataset that has 2 dimensions")
-    random_votes = generate_nominate_votes(n_leg=50, n_votes=1000, beta=10.0, beta_covar=0.0, k_dim=1, k_time=0, w=np.array([1.0]), cdf_type="logit", drop_unanimous_votes=False, replication_seed=42)
+    random_votes = generate_nominate_votes(n_leg=50, n_votes=1000, beta=10.0, beta_covar=0.0, k_dim=1, k_time=0, w=np.array([
+                                           1.0]), cdf_type="logit", drop_unanimous_votes=False, replication_seed=42)
     vote_df = random_votes.reset_index()
 
     k_dim = 1
@@ -268,9 +277,11 @@ if __name__ == '__main__':
                    unanimity_check=False,
                    )
     vote_data = process_data(**data_params)
-    custom_init_values = torch.tensor(vote_data["init_embedding"].values, dtype=torch.float, device=device)
+    custom_init_values = torch.tensor(
+        vote_data["init_embedding"].values, dtype=torch.float, device=device)
 
-    x_train, x_test, sample_weights = format_model_data(vote_data, data_params, weight_by_frequency=False)
+    x_train, x_test, sample_weights = format_model_data(
+        vote_data, data_params, weight_by_frequency=False)
 
     # Convert training and test data to tensors
     legs = torch.tensor(x_train[0].flatten(), dtype=torch.long, device=device)
@@ -331,22 +342,26 @@ if __name__ == '__main__':
                    unanimity_check=False,
                    )
     vote_data = process_data(**data_params)
-    custom_init_values = torch.tensor(vote_data["init_embedding"].values, dtype=torch.float, device=device)
+    custom_init_values = torch.tensor(
+        vote_data["init_embedding"].values, dtype=torch.float, device=device)
 
-    x_train, x_test, sample_weights = format_model_data(vote_data, data_params, weight_by_frequency=False)
+    x_train, x_test, sample_weights = format_model_data(
+        vote_data, data_params, weight_by_frequency=False)
 
     # Convert training and test data to tensors
     legs = torch.tensor(x_train[0].flatten(), dtype=torch.long, device=device)
     votes = torch.tensor(x_train[1].flatten(), dtype=torch.long, device=device)
     responses = torch.tensor(vote_data["y_train"].flatten(), dtype=torch.float, device=device)
     # covariates = torch.tensor(vote_data["covariates_train"], dtype=torch.float, device=device)
-    time_passed = torch.tensor(np.stack(vote_data["time_passed_train"]).transpose(), dtype=torch.float, device=device)
+    time_passed = torch.tensor(
+        np.stack(vote_data["time_passed_train"]).transpose(), dtype=torch.float, device=device)
 
     legs_test = torch.tensor(x_test[0].flatten(), dtype=torch.long, device=device)
     votes_test = torch.tensor(x_test[1].flatten(), dtype=torch.long, device=device)
     responses_test = torch.tensor(vote_data["y_test"].flatten(), dtype=torch.float, device=device)
     # covariates_test = torch.tensor(vote_data["covariates_test"], dtype=torch.float, device=device)
-    time_passed_test = torch.tensor(np.stack(vote_data["time_passed_test"]).transpose(), dtype=torch.float, device=device)
+    time_passed_test = torch.tensor(
+        np.stack(vote_data["time_passed_test"]).transpose(), dtype=torch.float, device=device)
 
     # time_tensor = torch.cat([torch.ones(time_passed.shape[0], device=device).unsqueeze(-1), time_passed], axis=1)
     time_tensor = time_passed
@@ -408,7 +423,6 @@ if __name__ == '__main__':
     pd.Series(test_losses).min()
     pd.Series(test_losses).idxmin()
 
-
     from ignite.engine import Engine, Events
     from ignite.metrics import Accuracy, Loss, RunningAverage
     from ignite.handlers import ModelCheckpoint, EarlyStopping
@@ -419,7 +433,8 @@ if __name__ == '__main__':
     logger.info("Set up a pytorch model with ignite")
     k_time = 0
     if k_time > 0:
-        model = wnom_full(n_legs, n_votes, k_dim, pretrained, k_time=k_time, dropout_rate=0.2).to(device)
+        model = wnom_full(n_legs, n_votes, k_dim, pretrained,
+                          k_time=k_time, dropout_rate=0.2).to(device)
     else:
         model = wnom_full(n_legs, n_votes, k_dim, pretrained, dropout_rate=0.2).to(device)
     criterion = torch.nn.BCEWithLogitsLoss()
@@ -440,7 +455,6 @@ if __name__ == '__main__':
         train_loader = [[legs, votes, responses]]
         val_loader = [[legs_test, votes_test, responses_test]]
 
-
     def process_function(engine, batch):
         model.train()
         optimizer.zero_grad()
@@ -455,7 +469,6 @@ if __name__ == '__main__':
         optimizer.step()
         return y_pred, y
 
-
     def eval_function(engine, batch):
         model.eval()
         with torch.no_grad():
@@ -466,7 +479,6 @@ if __name__ == '__main__':
                 x1, x2, y = batch
                 y_pred = model(x1, x2)
             return y_pred, y
-
 
     trainer = Engine(process_function)
     train_evaluator = Engine(eval_function)
@@ -479,7 +491,6 @@ if __name__ == '__main__':
         y_pred = torch.round(torch.sigmoid(y_pred))
         return y_pred, y
 
-
     Accuracy(output_transform=thresholded_output_transform).attach(train_evaluator, 'accuracy')
     Loss(criterion).attach(train_evaluator, 'bce')
 
@@ -490,17 +501,16 @@ if __name__ == '__main__':
     pbar.attach(trainer)
     # pbar.attach(trainer, ['loss'])
 
-
     def score_function(engine):
         # logger.warning(engine.state.metrics)
         val_loss = engine.state.metrics['bce']
         return -val_loss
 
-
     handler = EarlyStopping(patience=9, score_function=score_function, trainer=trainer)
     validation_evaluator.add_event_handler(Events.COMPLETED, handler)
 
-    checkpointer = ModelCheckpoint('.', f'wnom_full_{k_dim}_{k_time}', n_saved=9, create_dir=True, require_empty=False)
+    checkpointer = ModelCheckpoint(
+        '.', f'wnom_full_{k_dim}_{k_time}', n_saved=9, create_dir=True, require_empty=False)
     trainer.add_event_handler(Events.EPOCH_COMPLETED, checkpointer, {'wnom_full': model})
 
     @trainer.on(Events.EPOCH_COMPLETED)
@@ -513,7 +523,6 @@ if __name__ == '__main__':
             "Training Results - Epoch: {}  Avg accuracy: {:.2f} Avg loss: {:.4f}"
             .format(engine.state.epoch, avg_accuracy, avg_bce))
 
-
     @trainer.on(Events.EPOCH_COMPLETED)
     def log_validation_results(engine):
         validation_evaluator.run(val_loader)
@@ -525,9 +534,7 @@ if __name__ == '__main__':
             .format(engine.state.epoch, avg_accuracy, avg_bce))
         pbar.n = pbar.last_print_n = 0
 
-
     trainer.run(train_loader, max_epochs=1000)
-
 
     logger.info("Set up a pytorch model with ignite")
     k_time = 1
@@ -553,7 +560,6 @@ if __name__ == '__main__':
         train_loader = [[legs, votes, responses]]
         val_loader = [[legs_test, votes_test, responses_test]]
 
-
     def process_function(engine, batch):
         model.train()
         optimizer.zero_grad()
@@ -568,7 +574,6 @@ if __name__ == '__main__':
         optimizer.step()
         return y_pred, y
 
-
     def eval_function(engine, batch):
         model.eval()
         with torch.no_grad():
@@ -579,7 +584,6 @@ if __name__ == '__main__':
                 x1, x2, y = batch
                 y_pred = model(x1, x2)
             return y_pred, y
-
 
     trainer = Engine(process_function)
     train_evaluator = Engine(eval_function)
@@ -592,7 +596,6 @@ if __name__ == '__main__':
         y_pred = torch.round(torch.sigmoid(y_pred))
         return y_pred, y
 
-
     Accuracy(output_transform=thresholded_output_transform).attach(train_evaluator, 'accuracy')
     Loss(criterion).attach(train_evaluator, 'bce')
 
@@ -603,17 +606,16 @@ if __name__ == '__main__':
     pbar.attach(trainer)
     # pbar.attach(trainer, ['loss'])
 
-
     def score_function(engine):
         # logger.warning(engine.state.metrics)
         val_loss = engine.state.metrics['bce']
         return -val_loss
 
-
     handler = EarlyStopping(patience=25, score_function=score_function, trainer=trainer)
     validation_evaluator.add_event_handler(Events.COMPLETED, handler)
 
-    checkpointer = ModelCheckpoint('.', f'wnom_full_{k_dim}_{k_time}', n_saved=9, create_dir=True, require_empty=False)
+    checkpointer = ModelCheckpoint(
+        '.', f'wnom_full_{k_dim}_{k_time}', n_saved=9, create_dir=True, require_empty=False)
     trainer.add_event_handler(Events.EPOCH_COMPLETED, checkpointer, {'wnom_full': model})
 
     @trainer.on(Events.EPOCH_COMPLETED)
@@ -626,7 +628,6 @@ if __name__ == '__main__':
             "Training Results - Epoch: {}  Avg accuracy: {:.2f} Avg loss: {:.4f}"
             .format(engine.state.epoch, avg_accuracy, avg_bce))
 
-
     @trainer.on(Events.EPOCH_COMPLETED)
     def log_validation_results(engine):
         validation_evaluator.run(val_loader)
@@ -637,6 +638,5 @@ if __name__ == '__main__':
             "Validation Results - Epoch: {}  Avg accuracy: {:.2f} Avg loss: {:.4f}"
             .format(engine.state.epoch, avg_accuracy, avg_bce))
         pbar.n = pbar.last_print_n = 0
-
 
     trainer.run(train_loader, max_epochs=1000)
