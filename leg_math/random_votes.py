@@ -7,9 +7,9 @@ import pandas as pd
 
 from scipy import stats
 
-from data_generation.data_processing import drop_unanimous, process_data, prep_r_rollcall
+from .data_processing import drop_unanimous, process_data, prep_r_rollcall
 
-from constants import DATA_PATH
+from .constants import DATA_PATH
 
 SYNTHETIC_PATH = DATA_PATH + 'synthetic/'
 if not os.path.exists(SYNTHETIC_PATH):
